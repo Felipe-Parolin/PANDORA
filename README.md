@@ -1,5 +1,5 @@
 # PANDORA
-Sistema Inteligente para Gestão e Análise de Manutenção de Equipamentos com LLM
+Plataforma Inteligente de Locação e Manutenção de Equipamentos com LLM
 
 # Integrantes:
 116758 - Eduardo Souza Gomes (Engenheiro de IA e Dados)  
