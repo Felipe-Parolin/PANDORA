@@ -1,2 +1,23 @@
 desktop.ini
 **/desktop.ini
+/.env
+/tmp/
+
+# Python / Django
+api/.venv/
+api/__pycache__/
+api/**/__pycache__/
+api/*.sqlite3
+api/media/
+api/.env
+*.py[cod]
+
+# Vue / Vite
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
