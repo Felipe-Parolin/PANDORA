@@ -21,3 +21,6 @@ frontend/.env
 .idea/
 .vscode/
 .DS_Store
+
+# frontend
+package-lock.json
