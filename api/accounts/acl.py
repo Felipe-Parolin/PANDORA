@@ -15,7 +15,7 @@ PERMISSION_CATALOG = [
     {"code": "rentals.view", "label": "Consultar orçamentos e locações", "module": "Locações"},
     {"code": "rentals.manage", "label": "Cadastrar, editar e excluir orçamentos", "module": "Locações"},
     {"code": "rentals.approve", "label": "Aprovar orçamento e reservar equipamento", "module": "Locações"},
-    {"code": "rentals.inspect", "label": "Realizar inspeções de locação", "module": "Locações"},
+    {"code": "rentals.inspect", "label": "Realizar inspeção de devolução", "module": "Locações"},
     {"code": "rentals.dispatch", "label": "Registrar entrega de equipamentos", "module": "Locações"},
     {"code": "rentals.extend", "label": "Prorrogar locações", "module": "Locações"},
     {"code": "rentals.return", "label": "Registrar e concluir devoluções", "module": "Locações"},

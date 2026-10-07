@@ -23,7 +23,7 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 - bloqueio de sobreposição quando o orçamento vira reserva aprovada;
 - bloqueio por OS aberta ou manutenção crítica vencida;
 - reserva com responsável, condições e cancelamento auditável;
-- checklist pré-locação por categoria, fotos, observações e impedimento crítico;
+- OS pré-locação automática na Manutenção para cada equipamento reservado, com checklist por categoria, fotos, observações e impedimento crítico;
 - entrega vinculada à inspeção, prorrogação com nova consulta de disponibilidade e histórico;
 - devolução com comparação pré/pós-locação e equipamento bloqueado até a inspeção final;
 - encaminhamento automático de avarias da devolução para ordem de serviço;

@@ -103,7 +103,7 @@ async function reserve(quote) {
   notice.value = ''
   try {
     await api.post(`/rental-quotes/${quote.id}/reserve/`)
-    notice.value = `${quote.number} reservada. A inspeção pré-locação já pode ser realizada.`
+    notice.value = `${quote.number} reservada. Os chamados de inspeção pré-locação foram abertos na Manutenção.`
     await load()
   } catch (event) { error.value = apiError(event) }
   finally { busy.value = false }
@@ -258,13 +258,13 @@ onMounted(load)
         <tr v-for="quote in filteredQuotes" :key="quote.id">
           <td><strong>{{ quote.number }}</strong><small>{{ shortDate(quote.created_at?.slice(0, 10)) }} · {{ quote.created_by_name }}</small></td>
           <td>{{ quote.customer_name }}</td><td>{{ shortDate(quote.start_date) }} → {{ shortDate(quote.end_date) }}</td><td>{{ quote.items.length }} equipamento(s)</td>
-          <td><StatusBadge :value="quote.status" :label="quote.status_label" /><small v-if="quote.status === 'APPROVED'">Pré-inspeção {{ inspectionProgress(quote, 'PRE_RENTAL').done }}/{{ inspectionProgress(quote, 'PRE_RENTAL').total }}</small><small v-if="quote.status === 'RETURNED'">Inspeção final {{ inspectionProgress(quote, 'RETURN').done }}/{{ inspectionProgress(quote, 'RETURN').total }}</small></td>
+          <td><StatusBadge :value="quote.status" :label="quote.status_label" /><small v-if="quote.status === 'APPROVED'">Manutenção · pré-inspeção {{ inspectionProgress(quote, 'PRE_RENTAL').done }}/{{ inspectionProgress(quote, 'PRE_RENTAL').total }}</small><small v-if="quote.status === 'RETURNED'">Inspeção final {{ inspectionProgress(quote, 'RETURN').done }}/{{ inspectionProgress(quote, 'RETURN').total }}</small></td>
           <td class="right"><strong>{{ money(quote.total) }}</strong></td>
           <td class="right"><div class="row-actions rental-row-actions">
             <button v-if="can('rentals.manage') && ['DRAFT', 'SENT'].includes(quote.status)" class="icon-btn table-action" title="Editar orçamento" @click="open(quote)"><Pencil :size="17" /></button>
             <button v-if="can('rentals.approve') && ['DRAFT', 'SENT'].includes(quote.status)" class="icon-btn success-action" title="Aprovar e reservar" :disabled="busy" @click="reserve(quote)"><PackageCheck :size="17" /></button>
-            <button v-if="['APPROVED'].includes(quote.status)" class="icon-btn table-action" title="Inspeção pré-locação" @click="inspectionContext = { quote, type: 'PRE_RENTAL' }"><ClipboardCheck :size="17" /></button>
-            <button v-if="can('rentals.dispatch') && quote.status === 'APPROVED'" class="icon-btn success-action" title="Registrar entrega" @click="openOperation('deliver', quote)"><Truck :size="17" /></button>
+            <router-link v-if="can('maintenance.view') && quote.status === 'APPROVED'" class="icon-btn table-action" title="Ver chamados de pré-locação na manutenção" :to="{ name: 'maintenance', query: { quote: quote.number } }"><ClipboardCheck :size="17" /></router-link>
+            <button v-if="can('rentals.dispatch') && quote.status === 'APPROVED'" class="icon-btn success-action" title="Registrar entrega" :disabled="inspectionProgress(quote, 'PRE_RENTAL').done !== inspectionProgress(quote, 'PRE_RENTAL').total || quote.inspections.some(item => item.inspection_type === 'PRE_RENTAL' && item.result === 'BLOCKED')" @click="openOperation('deliver', quote)"><Truck :size="17" /></button>
             <button v-if="can('rentals.extend') && ['APPROVED', 'ACTIVE'].includes(quote.status)" class="icon-btn table-action" title="Prorrogar locação" @click="openOperation('extend', quote)"><CalendarRange :size="17" /></button>
             <button v-if="can('rentals.return') && quote.status === 'ACTIVE'" class="icon-btn table-action" title="Registrar devolução" @click="openOperation('return', quote)"><RotateCcw :size="17" /></button>
             <button v-if="['RETURNED', 'COMPLETED'].includes(quote.status)" class="icon-btn table-action" title="Inspeção final" @click="inspectionContext = { quote, type: 'RETURN' }"><ClipboardCheck :size="17" /></button>
@@ -277,8 +277,9 @@ onMounted(load)
       <div class="mobile-card-list"><article v-for="quote in filteredQuotes" :key="quote.id" class="mobile-record-card rental-mobile-card"><header><div><span class="eyebrow">{{ quote.number }}</span><strong>{{ quote.customer_name }}</strong></div><StatusBadge :value="quote.status" :label="quote.status_label" /></header><dl><div><dt>Período</dt><dd>{{ shortDate(quote.start_date) }} → {{ shortDate(quote.end_date) }}</dd></div><div><dt>Equipamentos</dt><dd>{{ quote.items.length }}</dd></div><div><dt>Total</dt><dd><strong>{{ money(quote.total) }}</strong></dd></div></dl><footer>
         <button v-if="can('rentals.manage') && ['DRAFT', 'SENT'].includes(quote.status)" class="btn secondary" @click="open(quote)"><Pencil :size="15" />Editar</button>
         <button v-if="can('rentals.approve') && ['DRAFT', 'SENT'].includes(quote.status)" class="btn primary" @click="reserve(quote)"><PackageCheck :size="15" />Reservar</button>
-        <button v-if="quote.status === 'APPROVED'" class="btn secondary" @click="inspectionContext = { quote, type: 'PRE_RENTAL' }"><ClipboardCheck :size="15" />Inspecionar</button>
-        <button v-if="can('rentals.dispatch') && quote.status === 'APPROVED'" class="btn primary" @click="openOperation('deliver', quote)"><Truck :size="15" />Entregar</button>
+        <router-link v-if="can('maintenance.view') && quote.status === 'APPROVED'" class="btn secondary" :to="{ name: 'maintenance', query: { quote: quote.number } }"><ClipboardCheck :size="15" />Ver chamados</router-link>
+        <span v-else-if="quote.status === 'APPROVED'" class="rental-inspection-note">Pré-locação na Manutenção: {{ inspectionProgress(quote, 'PRE_RENTAL').done }}/{{ inspectionProgress(quote, 'PRE_RENTAL').total }}</span>
+        <button v-if="can('rentals.dispatch') && quote.status === 'APPROVED'" class="btn primary" :disabled="inspectionProgress(quote, 'PRE_RENTAL').done !== inspectionProgress(quote, 'PRE_RENTAL').total || quote.inspections.some(item => item.inspection_type === 'PRE_RENTAL' && item.result === 'BLOCKED')" @click="openOperation('deliver', quote)"><Truck :size="15" />Entregar</button>
         <button v-if="can('rentals.extend') && ['APPROVED', 'ACTIVE'].includes(quote.status)" class="btn secondary" @click="openOperation('extend', quote)"><CalendarRange :size="15" />Prorrogar</button>
         <button v-if="can('rentals.return') && quote.status === 'ACTIVE'" class="btn primary" @click="openOperation('return', quote)"><RotateCcw :size="15" />Devolver</button>
         <button v-if="['RETURNED', 'COMPLETED'].includes(quote.status)" class="btn secondary" @click="inspectionContext = { quote, type: 'RETURN' }"><ClipboardCheck :size="15" />Inspeção final</button>

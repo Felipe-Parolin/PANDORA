@@ -14,7 +14,7 @@ from core.models import AuditLog
 from maintenance.models import ServiceOrder
 from .models import RentalExtension, RentalInspection, RentalQuote
 from .serializers import RentalInspectionSerializer, RentalQuoteSerializer
-from .services import availability_reason, ensure_inspections, refresh_equipment_status
+from .services import availability_reason, ensure_inspections, ensure_pre_rental_orders, refresh_equipment_status
 
 
 class RentalQuoteViewSet(ModelViewSet):
@@ -74,6 +74,7 @@ class RentalQuoteViewSet(ModelViewSet):
         quote.reserved_at = timezone.now()
         quote.save(update_fields=("status", "reserved_by", "reserved_at", "updated_at"))
         ensure_inspections(quote, RentalInspection.Type.PRE_RENTAL)
+        ensure_pre_rental_orders(quote, request.user)
         for item in equipment:
             refresh_equipment_status(item)
         self._audit(request, quote, "RESERVED", status=quote.status, equipment=[item.internal_code for item in equipment])
@@ -93,6 +94,11 @@ class RentalQuoteViewSet(ModelViewSet):
         quote.cancelled_at = timezone.now()
         quote.cancellation_reason = reason
         quote.save(update_fields=("status", "cancelled_by", "cancelled_at", "cancellation_reason", "updated_at"))
+        for inspection in quote.inspections.filter(inspection_type=RentalInspection.Type.PRE_RENTAL):
+            order = ServiceOrder.objects.filter(rental_inspection=inspection).first()
+            if order and order.status not in {ServiceOrder.Status.COMPLETED, ServiceOrder.Status.CANCELLED} and inspection.result != RentalInspection.Result.BLOCKED:
+                order.status = ServiceOrder.Status.CANCELLED
+                order.save()
         for line in quote.items.select_related("equipment"):
             refresh_equipment_status(line.equipment)
         self._audit(request, quote, "CANCELLED", reason=reason)
@@ -111,6 +117,11 @@ class RentalQuoteViewSet(ModelViewSet):
         blocked = [item.equipment.internal_code for item in inspections if item.result == RentalInspection.Result.BLOCKED or item.critical_impediment]
         if blocked:
             raise ValidationError({"inspections": f"Equipamentos impedidos na inspeção: {', '.join(blocked)}."})
+        unfinished = [item.equipment.internal_code for item in inspections if not ServiceOrder.objects.filter(
+            rental_inspection=item, status=ServiceOrder.Status.COMPLETED, released=True
+        ).exists()]
+        if unfinished:
+            raise ValidationError({"inspections": f"A inspeção na manutenção ainda não liberou: {', '.join(unfinished)}."})
         equipment_ids = quote.items.values_list("equipment_id", flat=True)
         equipment = list(Equipment.objects.select_for_update().filter(pk__in=equipment_ids).order_by("pk"))
         conflicts = {item.internal_code: reason for item in equipment if (reason := availability_reason(item, quote.start_date, quote.end_date, quote))}
@@ -236,6 +247,8 @@ class RentalQuoteViewSet(ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         quote = self.get_object()
+        if ServiceOrder.objects.filter(rental_inspection__quote=quote).exists():
+            return Response({"detail": "Há chamados de manutenção vinculados. Mantenha a locação para preservar o histórico."}, status=status.HTTP_409_CONFLICT)
         if quote.status not in {RentalQuote.Status.DRAFT, RentalQuote.Status.SENT, RentalQuote.Status.CANCELLED, RentalQuote.Status.EXPIRED}:
             return Response({"detail": "Cancele ou conclua o fluxo antes de excluir esta locação."}, status=status.HTTP_409_CONFLICT)
         return super().destroy(request, *args, **kwargs)
@@ -267,7 +280,7 @@ class RentalInspectionViewSet(ModelViewSet):
     serializer_class = RentalInspectionSerializer
     permission_classes = [ACLPermission]
     acl_view = "rentals.view"
-    acl_manage = "rentals.inspect"
+    acl_manage = ("rentals.inspect", "maintenance.manage")
     http_method_names = ("get", "patch", "head", "options")
 
     def get_queryset(self):
@@ -279,6 +292,8 @@ class RentalInspectionViewSet(ModelViewSet):
         return queryset
 
     def perform_update(self, serializer):
+        if serializer.instance.inspection_type == RentalInspection.Type.PRE_RENTAL and not self.request.user.has_acl("maintenance.manage"):
+            raise PermissionDenied("A inspeção pré-locação é registrada pela equipe de manutenção.")
         inspection = serializer.save()
         AuditLog.objects.create(
             user=self.request.user,

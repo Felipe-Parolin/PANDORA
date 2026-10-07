@@ -4,8 +4,9 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from assets.models import Equipment
+from maintenance.models import ServiceOrder
 from .models import RentalExtension, RentalInspection, RentalItem, RentalQuote
-from .services import availability_reason, ensure_inspections, refresh_equipment_status
+from .services import availability_reason, ensure_inspections, ensure_pre_rental_orders, refresh_equipment_status
 
 
 class RentalItemSerializer(serializers.ModelSerializer):
@@ -60,10 +61,34 @@ class RentalInspectionSerializer(serializers.ModelSerializer):
         return attrs
 
     def update(self, instance, validated_data):
-        if validated_data.get("result", instance.result) != RentalInspection.Result.PENDING:
-            validated_data["performed_by"] = self.context["request"].user
+        result = validated_data.get("result", instance.result)
+        actor = self.context["request"].user
+        if result != RentalInspection.Result.PENDING:
+            validated_data["performed_by"] = actor
             validated_data["performed_at"] = timezone.now()
-        return super().update(instance, validated_data)
+        with transaction.atomic():
+            inspection = super().update(instance, validated_data)
+            if inspection.inspection_type == RentalInspection.Type.PRE_RENTAL:
+                order = ServiceOrder.objects.select_for_update().filter(rental_inspection=inspection).first()
+                if not order:
+                    raise serializers.ValidationError("O chamado de manutenção desta inspeção não foi encontrado.")
+                if result in {RentalInspection.Result.APPROVED, RentalInspection.Result.APPROVED_WITH_NOTES}:
+                    order.status = ServiceOrder.Status.COMPLETED
+                    order.technician = actor
+                    order.final_tests = f"Checklist pré-locação concluído: {inspection.get_result_display()}."
+                    order.released = True
+                elif result == RentalInspection.Result.BLOCKED:
+                    order.status = ServiceOrder.Status.IN_PROGRESS
+                    order.technician = actor
+                    order.priority = "CRÍTICA"
+                    order.diagnosis = inspection.observations or "Impedimento identificado na inspeção pré-locação."
+                    order.released = False
+                else:
+                    order.status = ServiceOrder.Status.OPEN
+                    order.released = False
+                order.save()
+                refresh_equipment_status(inspection.equipment)
+            return inspection
 
 
 class RentalExtensionSerializer(serializers.ModelSerializer):
@@ -107,6 +132,10 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"status": "Use a ação de cancelamento e registre o motivo."})
         if status in {RentalQuote.Status.ACTIVE, RentalQuote.Status.RETURNED, RentalQuote.Status.COMPLETED}:
             raise serializers.ValidationError({"status": "Use as ações de entrega e devolução para avançar a locação."})
+        if self.instance and self.instance.status == RentalQuote.Status.APPROVED and any(
+            key in attrs for key in ("items", "customer", "start_date", "end_date", "status")
+        ):
+            raise serializers.ValidationError("A reserva aprovada não pode trocar cliente, equipamentos ou período. Cancele e gere outro orçamento.")
         if not self.instance and not items:
             raise serializers.ValidationError({"items": "Inclua pelo menos um equipamento."})
         effective_items = items if items is not None else ([{"equipment": item.equipment, "daily_rate": item.daily_rate} for item in self.instance.items.all()] if self.instance else [])
@@ -180,6 +209,7 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
         if changed:
             quote.save(update_fields=(*changed, "updated_at"))
         ensure_inspections(quote, RentalInspection.Type.PRE_RENTAL)
+        ensure_pre_rental_orders(quote, self.context["request"].user)
         for line in quote.items.select_related("equipment"):
             refresh_equipment_status(line.equipment)
 

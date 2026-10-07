@@ -8,11 +8,12 @@ import { api, apiError, can, rows, shortDate } from '../services/api'
 const props = defineProps({
   quote: { type: Object, required: true },
   type: { type: String, required: true },
+  initialId: { type: Number, default: null },
 })
 const emit = defineEmits(['close', 'changed'])
 
 const inspections = ref([])
-const selectedId = ref(null)
+const selectedId = ref(props.initialId)
 const media = ref([])
 const files = ref([])
 const error = ref('')
@@ -20,9 +21,9 @@ const busy = ref(false)
 
 const selected = computed(() => inspections.value.find(item => item.id === selectedId.value) || inspections.value[0])
 const title = computed(() => props.type === 'PRE_RENTAL' ? 'Inspeção pré-locação' : 'Inspeção de devolução')
-const editable = computed(() => can('rentals.inspect') && (
-  (props.type === 'PRE_RENTAL' && props.quote.status === 'APPROVED')
-  || (props.type === 'RETURN' && props.quote.status === 'RETURNED')
+const editable = computed(() => (
+  (props.type === 'PRE_RENTAL' && can('maintenance.manage') && props.quote.status === 'APPROVED')
+  || (props.type === 'RETURN' && can('rentals.inspect') && props.quote.status === 'RETURNED')
 ))
 const completed = computed(() => inspections.value.filter(item => item.result !== 'PENDING').length)
 const previous = computed(() => props.quote.inspections?.find(item => item.inspection_type === 'PRE_RENTAL' && item.equipment === selected.value?.equipment))
@@ -102,6 +103,7 @@ onMounted(load)
       <div class="progress-track"><i :style="{ width: `${inspections.length ? completed / inspections.length * 100 : 0}%` }" /></div>
     </div>
 
+    <div v-if="type === 'PRE_RENTAL'" class="inspection-flow-hint"><ShieldAlert :size="18" /><span>Chamado da manutenção: conclua o checklist para liberar a entrega. Uma falha mantém o equipamento bloqueado.</span></div>
     <div v-if="inspections.length" class="inspection-layout">
       <nav class="inspection-equipment-list" aria-label="Equipamentos da inspeção">
         <button v-for="item in inspections" :key="item.id" :class="{ active: item.id === selected?.id }" @click="selectInspection(item)">

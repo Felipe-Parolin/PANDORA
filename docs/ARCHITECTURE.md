@@ -39,10 +39,11 @@ A locação e a manutenção não dependem da disponibilidade de IA. Uma futura 
 10. O QR Code aponta para a consulta autenticada do equipamento e pode ser baixado em PNG.
 11. Um chamado abandonado exige justificativa, mantém o equipamento bloqueado e fica disponível para redistribuição.
 12. A seleção de locação antecipa a mesma regra de disponibilidade reaplicada na aprovação.
-13. A entrega exige checklist pré-locação concluído para todos os itens e ausência de impedimento crítico.
-14. A prorrogação repete a verificação de disponibilidade e preserva o histórico de datas e condições.
-15. A devolução mantém o equipamento indisponível até a inspeção final; avarias geram OS pós-locação.
-16. Planos podem vencer por data ou horas de uso, com faixas de aviso configuráveis.
+13. Cada equipamento reservado abre uma OS de pré-locação na Manutenção, vinculada à inspeção. A própria OS pendente não bloqueia sua reserva; outras OS abertas continuam bloqueando.
+14. A entrega exige checklist pré-locação aprovado e OS liberada para todos os itens. Falha crítica mantém a OS aberta e o equipamento bloqueado.
+15. A prorrogação repete a verificação de disponibilidade e preserva o histórico de datas e condições.
+16. A devolução mantém o equipamento indisponível até a inspeção final; avarias geram OS pós-locação.
+17. Planos podem vencer por data ou horas de uso, com faixas de aviso configuráveis.
 
 ## Ciclo da locação
 

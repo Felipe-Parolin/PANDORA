@@ -1,9 +1,11 @@
 from django.db.models import Q
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.permissions import ACLPermission
+from rentals.services import refresh_equipment_status
 from .models import MaintenancePlan, ServiceOrder
 from .patterns import MaintenanceKitFactory
 from .serializers import MaintenancePlanSerializer, ServiceOrderSerializer
@@ -24,11 +26,22 @@ class MaintenancePlanViewSet(ModelViewSet):
 
 
 class ServiceOrderViewSet(ModelViewSet):
-    queryset = ServiceOrder.objects.select_related("equipment", "plan", "opened_by", "technician").prefetch_related("activities")
+    queryset = ServiceOrder.objects.select_related("equipment", "plan", "opened_by", "technician", "rental_inspection__quote").prefetch_related("activities")
     serializer_class = ServiceOrderSerializer
     permission_classes = [ACLPermission]
     acl_view = "maintenance.view"
     acl_manage = "maintenance.manage"
+
+    def perform_create(self, serializer):
+        order = serializer.save()
+        refresh_equipment_status(order.equipment)
+
+    def perform_update(self, serializer):
+        previous_equipment = serializer.instance.equipment
+        order = serializer.save()
+        refresh_equipment_status(previous_equipment)
+        if order.equipment_id != previous_equipment.pk:
+            refresh_equipment_status(order.equipment)
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -55,3 +68,12 @@ class ServiceOrderViewSet(ModelViewSet):
     def checklist_template(self, request):
         kit = MaintenanceKitFactory.create(request.query_params.get("type", ServiceOrder.Type.CORRECTIVE))
         return Response({"checklist": kit.checklist, "route": kit.route})
+
+    def destroy(self, request, *args, **kwargs):
+        order = self.get_object()
+        if order.rental_inspection_id:
+            return Response({"detail": "Chamados vinculados a locações não podem ser excluídos."}, status=status.HTTP_409_CONFLICT)
+        equipment = order.equipment
+        response = super().destroy(request, *args, **kwargs)
+        refresh_equipment_status(equipment)
+        return response

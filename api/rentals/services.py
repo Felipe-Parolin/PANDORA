@@ -1,4 +1,5 @@
 from assets.models import Equipment
+from django.db.models import Q
 from maintenance.models import ServiceOrder
 from maintenance.services import critical_maintenance_reason
 from .models import RentalInspection, RentalItem, RentalQuote
@@ -56,12 +57,35 @@ def ensure_inspections(quote, inspection_type):
         )
 
 
+def ensure_pre_rental_orders(quote, opened_by):
+    """Open one maintenance ticket per reserved equipment, without duplicating retries."""
+    for inspection in quote.inspections.filter(inspection_type=RentalInspection.Type.PRE_RENTAL):
+        ServiceOrder.objects.get_or_create(
+            rental_inspection=inspection,
+            defaults={
+                "equipment": inspection.equipment,
+                "maintenance_type": ServiceOrder.Type.PRE_RENTAL,
+                "priority": "ALTA",
+                "symptoms": f"Inspeção pré-locação obrigatória para a reserva {quote.number}.",
+                "opened_by": opened_by,
+            },
+        )
+
+
+def blocking_service_orders(equipment):
+    return ServiceOrder.objects.filter(equipment=equipment).exclude(
+        status__in=[ServiceOrder.Status.COMPLETED, ServiceOrder.Status.CANCELLED]
+    )
+
+
 def refresh_equipment_status(equipment):
     if equipment.status == Equipment.Status.INACTIVE:
         return equipment.status
-    if ServiceOrder.objects.filter(equipment=equipment).exclude(
-        status__in=[ServiceOrder.Status.COMPLETED, ServiceOrder.Status.CANCELLED]
-    ).exists():
+    pending_pre_rental = Q(
+        maintenance_type=ServiceOrder.Type.PRE_RENTAL,
+        rental_inspection__quote__status=RentalQuote.Status.APPROVED,
+    ) & ~Q(rental_inspection__result=RentalInspection.Result.BLOCKED)
+    if blocking_service_orders(equipment).exclude(pending_pre_rental).exists():
         new_status = Equipment.Status.MAINTENANCE
     elif RentalItem.objects.filter(equipment=equipment, quote__status=RentalQuote.Status.RETURNED).exists():
         new_status = Equipment.Status.INSPECTION
@@ -90,7 +114,13 @@ def availability_reason(equipment, start_date, end_date, ignore_quote=None):
         conflicts = conflicts.exclude(quote=ignore_quote)
     if conflicts.exists():
         return "Já existe uma locação aprovada no período informado."
-    if ServiceOrder.objects.filter(equipment=equipment).exclude(status__in=[ServiceOrder.Status.COMPLETED, ServiceOrder.Status.CANCELLED]).exists():
+    orders = blocking_service_orders(equipment)
+    if ignore_quote:
+        orders = orders.exclude(
+            maintenance_type=ServiceOrder.Type.PRE_RENTAL,
+            rental_inspection__quote=ignore_quote,
+        )
+    if orders.exists():
         return "Existe uma ordem de serviço aberta para o equipamento."
     maintenance_reason = critical_maintenance_reason(equipment)
     if maintenance_reason:

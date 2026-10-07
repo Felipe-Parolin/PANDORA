@@ -61,7 +61,7 @@ Planos expõem `due_date`, `due_usage_hours`, `usage_remaining` e `alert_status`
 |---|---|---|
 | CRUD | `rental-quotes/` | orçamento e seus itens |
 | `GET` | `rental-quotes/availability/?start=2026-09-20&end=2026-09-25` | equipamentos disponíveis e bloqueados, com motivo |
-| `POST` | `rental-quotes/{id}/reserve/` | aprova e reserva, registrando responsável e inspeções prévias |
+| `POST` | `rental-quotes/{id}/reserve/` | aprova e reserva, gerando inspeção e OS pré-locação para cada equipamento |
 | `POST` | `rental-quotes/{id}/cancel/` | cancela com motivo e libera os equipamentos |
 | `POST` | `rental-quotes/{id}/deliver/` | registra entrega após inspeções aprovadas |
 | `POST` | `rental-quotes/{id}/extend/` | prorroga após nova validação de disponibilidade |
@@ -93,6 +93,6 @@ Exemplo de criação:
 
 O fluxo usa os estados `DRAFT`, `SENT`, `APPROVED`, `ACTIVE`, `RETURNED`, `COMPLETED`, `CANCELLED` e `EXPIRED`. Mudanças posteriores à reserva são feitas pelas ações específicas, mantendo responsáveis, datas e trilha de auditoria.
 
-Ao reservar, entregar ou prorrogar, a API verifica sobreposição, situação operacional, OS aberta e manutenção crítica vencida dentro de transação atômica. A entrega exige todas as inspeções pré-locação aprovadas. Na devolução, o equipamento permanece em `INSPECTION`; itens avariados ou críticos geram automaticamente uma OS pós-locação.
+Ao reservar, entregar ou prorrogar, a API verifica sobreposição, situação operacional, OS aberta e manutenção crítica vencida dentro de transação atômica. A OS pré-locação vinculada à própria reserva é exceção na disponibilidade, mas outras OS abertas continuam bloqueando. A equipe de Manutenção registra o checklist por `PATCH rental-inspections/{id}/`; aprovação conclui e libera a OS automaticamente, e impedimento mantém o equipamento bloqueado. Uma OS pré-locação de reserva ativa não pode ser concluída ou excluída manualmente. Se a reserva for cancelada após um impedimento, a OS permanece aberta para reparo e exige testes finais e liberação técnica. A entrega exige inspeção aprovada e OS liberada para todos os equipamentos. Na devolução, o equipamento permanece em `INSPECTION`; itens avariados ou críticos geram automaticamente uma OS pós-locação.
 
 As evidências podem ser enviadas por `media/` usando `rental_inspection=<id>`, categoria `INSPECTION` e upload multipart.

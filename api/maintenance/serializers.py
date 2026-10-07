@@ -54,12 +54,16 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
     technician_name = serializers.CharField(source="technician.full_name", read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     maintenance_type_label = serializers.CharField(source="get_maintenance_type_display", read_only=True)
+    rental_quote_id = serializers.IntegerField(source="rental_inspection.quote_id", read_only=True)
+    rental_quote_number = serializers.CharField(source="rental_inspection.quote.number", read_only=True)
+    rental_quote_status = serializers.CharField(source="rental_inspection.quote.status", read_only=True)
+    inspection_result = serializers.CharField(source="rental_inspection.result", read_only=True)
     activities = MaintenanceActivitySerializer(many=True, required=False)
 
     class Meta:
         model = ServiceOrder
         fields = "__all__"
-        read_only_fields = ("opened_by", "number", "public_id", "opened_at")
+        read_only_fields = ("opened_by", "number", "public_id", "opened_at", "rental_inspection")
 
     def create(self, validated_data):
         activities = validated_data.pop("activities", [])
@@ -88,6 +92,23 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
         return order
 
     def validate(self, attrs):
+        if self.instance and self.instance.rental_inspection_id:
+            inspection = self.instance.rental_inspection
+            if inspection.inspection_type == "PRE_RENTAL":
+                cancelled_repair = inspection.quote.status == "CANCELLED" and inspection.result == "BLOCKED"
+                if inspection.quote.status != "APPROVED" and not cancelled_repair:
+                    raise serializers.ValidationError("Este chamado de pré-locação está encerrado para alterações.")
+                if any(key in attrs for key in ("equipment", "maintenance_type")) or ("released" in attrs and not cancelled_repair):
+                    raise serializers.ValidationError("O equipamento, o tipo e a liberação deste chamado são controlados pela reserva.")
+                requested_status = attrs.get("status", self.instance.status)
+                if cancelled_repair and requested_status == ServiceOrder.Status.CANCELLED:
+                    raise serializers.ValidationError({"status": "Uma falha confirmada exige reparo e liberação técnica."})
+                if cancelled_repair and requested_status == ServiceOrder.Status.COMPLETED and not attrs.get("released", self.instance.released):
+                    raise serializers.ValidationError({"released": "Conclua os testes e libere o equipamento após o reparo."})
+                if not cancelled_repair and requested_status in {ServiceOrder.Status.COMPLETED, ServiceOrder.Status.CANCELLED} and requested_status != self.instance.status:
+                    raise serializers.ValidationError({"status": "Conclua a inspeção para liberar este chamado."})
+                if inspection.result in {"APPROVED", "APPROVED_WITH_NOTES"} and requested_status != self.instance.status:
+                    raise serializers.ValidationError({"status": "O chamado já foi liberado pela inspeção."})
         released = attrs.get("released", getattr(self.instance, "released", False))
         status = attrs.get("status", getattr(self.instance, "status", None))
         tests = attrs.get("final_tests", getattr(self.instance, "final_tests", ""))

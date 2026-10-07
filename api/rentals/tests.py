@@ -18,6 +18,7 @@ from rentals.services import availability_reason
 class RentalRulesTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("sales@example.com", "strong-password", full_name="Vendas", role=User.Role.SALES)
+        self.technician = User.objects.create_user("tech@example.com", "strong-password", full_name="Técnico", role=User.Role.MAINTENANCE)
         self.customer = Customer.objects.create(person_type="PF", name="Cliente", document="12345678909", phone="19999999999")
         self.category = EquipmentCategory.objects.create(name="Categoria", default_daily_rate=100)
         self.equipment = Equipment.objects.create(category=self.category, name="Equipamento", brand="Marca", model="M1", serial_number="SER-2", internal_code="EQ-T2", daily_rate=Decimal("100"))
@@ -87,6 +88,11 @@ class RentalRulesTests(TestCase):
         self.assertEqual(self.equipment.status, Equipment.Status.RESERVED)
         inspection = quote.inspections.get(inspection_type=RentalInspection.Type.PRE_RENTAL)
         self.assertEqual([item["label"] for item in inspection.checklist], self.category.pre_rental_checklist)
+        order = ServiceOrder.objects.get(rental_inspection=inspection)
+        self.assertEqual(order.maintenance_type, ServiceOrder.Type.PRE_RENTAL)
+        self.assertEqual(order.status, ServiceOrder.Status.OPEN)
+        self.assertEqual(order.opened_by, self.user)
+        self.assertIsNone(availability_reason(self.equipment, quote.start_date, quote.end_date, ignore_quote=quote))
 
     def test_critical_usage_maintenance_blocks_availability(self):
         self.equipment.current_usage_hours = 120
@@ -109,18 +115,92 @@ class RentalRulesTests(TestCase):
         self.assertEqual(blocked.status_code, 400)
         inspection = quote.inspections.get(inspection_type=RentalInspection.Type.PRE_RENTAL)
         checklist = [{**item, "status": "OK"} for item in inspection.checklist]
+        sales_attempt = self.client.patch(
+            f"/api/rental-inspections/{inspection.pk}/",
+            {"checklist": checklist, "result": RentalInspection.Result.APPROVED},
+            format="json",
+        )
+        self.assertEqual(sales_attempt.status_code, 403)
+        self.client.force_authenticate(self.technician)
         response = self.client.patch(
             f"/api/rental-inspections/{inspection.pk}/",
             {"checklist": checklist, "result": RentalInspection.Result.APPROVED, "condition": RentalInspection.Condition.GOOD},
             format="json",
         )
         self.assertEqual(response.status_code, 200, response.data)
+        order = ServiceOrder.objects.get(rental_inspection=inspection)
+        self.assertEqual(order.status, ServiceOrder.Status.COMPLETED)
+        self.assertTrue(order.released)
+        self.assertEqual(order.technician, self.technician)
+        self.client.force_authenticate(self.user)
         delivered = self.client.post(f"/api/rental-quotes/{quote.pk}/deliver/", {"conditions": "Sem ressalvas."}, format="json")
         self.assertEqual(delivered.status_code, 200, delivered.data)
         quote.refresh_from_db()
         self.equipment.refresh_from_db()
         self.assertEqual(quote.status, RentalQuote.Status.ACTIVE)
         self.assertEqual(self.equipment.status, Equipment.Status.RENTED)
+
+    def test_blocked_pre_rental_inspection_keeps_order_open_and_prevents_delivery(self):
+        quote = self.create_quote()
+        self.client.post(f"/api/rental-quotes/{quote.pk}/reserve/")
+        inspection = quote.inspections.get(inspection_type=RentalInspection.Type.PRE_RENTAL)
+        self.client.force_authenticate(self.technician)
+        response = self.client.patch(
+            f"/api/rental-inspections/{inspection.pk}/",
+            {
+                "checklist": [{**item, "status": "FAIL"} for item in inspection.checklist],
+                "result": RentalInspection.Result.BLOCKED,
+                "condition": RentalInspection.Condition.CRITICAL,
+                "observations": "Falha no freio.",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        order = ServiceOrder.objects.get(rental_inspection=inspection)
+        self.assertEqual(order.status, ServiceOrder.Status.IN_PROGRESS)
+        self.assertFalse(order.released)
+        self.equipment.refresh_from_db()
+        self.assertEqual(self.equipment.status, Equipment.Status.MAINTENANCE)
+        self.client.force_authenticate(self.user)
+        self.assertEqual(self.client.post(f"/api/rental-quotes/{quote.pk}/deliver/").status_code, 400)
+        self.assertEqual(self.client.post(f"/api/rental-quotes/{quote.pk}/cancel/", {"reason": "Falha crítica."}).status_code, 200)
+        self.client.force_authenticate(self.technician)
+        repaired = self.client.patch(
+            f"/api/service-orders/{order.pk}/",
+            {"status": "COMPLETED", "final_tests": "Freio reparado e testado.", "released": True},
+            format="json",
+        )
+        self.assertEqual(repaired.status_code, 200, repaired.data)
+        self.equipment.refresh_from_db()
+        self.assertEqual(self.equipment.status, Equipment.Status.AVAILABLE)
+
+    def test_cancel_reservation_closes_pending_inspection_order(self):
+        quote = self.create_quote()
+        self.client.post(f"/api/rental-quotes/{quote.pk}/reserve/")
+        inspection = quote.inspections.get(inspection_type=RentalInspection.Type.PRE_RENTAL)
+        response = self.client.post(f"/api/rental-quotes/{quote.pk}/cancel/", {"reason": "Cliente desistiu."})
+        self.assertEqual(response.status_code, 200, response.data)
+        order = ServiceOrder.objects.get(rental_inspection=inspection)
+        self.assertEqual(order.status, ServiceOrder.Status.CANCELLED)
+        self.equipment.refresh_from_db()
+        self.assertEqual(self.equipment.status, Equipment.Status.AVAILABLE)
+
+    def test_linked_order_cannot_be_closed_or_deleted_outside_inspection(self):
+        quote = self.create_quote()
+        self.client.post(f"/api/rental-quotes/{quote.pk}/reserve/")
+        order = ServiceOrder.objects.get(rental_inspection__quote=quote)
+        self.client.force_authenticate(self.technician)
+        assigned = self.client.patch(
+            f"/api/service-orders/{order.pk}/",
+            {"status": "IN_PROGRESS", "technician": self.technician.pk},
+            format="json",
+        )
+        self.assertEqual(assigned.status_code, 200, assigned.data)
+        self.equipment.refresh_from_db()
+        self.assertEqual(self.equipment.status, Equipment.Status.RESERVED)
+        response = self.client.patch(f"/api/service-orders/{order.pk}/", {"status": "COMPLETED"}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.client.delete(f"/api/service-orders/{order.pk}/").status_code, 409)
 
     def test_extension_rechecks_conflicts(self):
         quote = self.create_quote(status=RentalQuote.Status.ACTIVE)
