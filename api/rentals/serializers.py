@@ -5,6 +5,9 @@ from rest_framework import serializers
 
 from assets.models import Equipment
 from maintenance.models import ServiceOrder
+from logistics.serializers import TransportTaskSerializer
+from logistics.services import ensure_transport_task
+from logistics.models import TransportTask
 from .models import RentalExtension, RentalInspection, RentalItem, RentalQuote
 from .services import availability_reason, ensure_inspections, ensure_pre_rental_orders, refresh_equipment_status
 
@@ -109,6 +112,7 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
     items = RentalItemSerializer(many=True)
     inspections = RentalInspectionSerializer(many=True, read_only=True)
     extensions = RentalExtensionSerializer(many=True, read_only=True)
+    transport_tasks = TransportTaskSerializer(many=True, read_only=True)
 
     class Meta:
         model = RentalQuote
@@ -133,7 +137,10 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
         if status in {RentalQuote.Status.ACTIVE, RentalQuote.Status.RETURNED, RentalQuote.Status.COMPLETED}:
             raise serializers.ValidationError({"status": "Use as ações de entrega e devolução para avançar a locação."})
         if self.instance and self.instance.status == RentalQuote.Status.APPROVED and any(
-            key in attrs for key in ("items", "customer", "start_date", "end_date", "status")
+            key in attrs for key in (
+                "items", "customer", "start_date", "end_date", "status", "delivery_transport_required",
+                "return_transport_required", "delivery_address", "return_address", "transport_fee",
+            )
         ):
             raise serializers.ValidationError("A reserva aprovada não pode trocar cliente, equipamentos ou período. Cancele e gere outro orçamento.")
         if not self.instance and not items:
@@ -145,10 +152,26 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
         days = (end - start).days + 1 if start and end else 0
         calculated_subtotal = sum((item.get("daily_rate", item["equipment"].daily_rate) * days for item in effective_items), Decimal("0"))
         discount = attrs.get("discount", getattr(self.instance, "discount", Decimal("0")))
+        transport_fee = attrs.get("transport_fee", getattr(self.instance, "transport_fee", Decimal("0")))
+        if transport_fee < 0:
+            raise serializers.ValidationError({"transport_fee": "O frete não pode ser negativo."})
+        if transport_fee and not (
+            attrs.get("delivery_transport_required", getattr(self.instance, "delivery_transport_required", False))
+            or attrs.get("return_transport_required", getattr(self.instance, "return_transport_required", False))
+        ):
+            raise serializers.ValidationError({"transport_fee": "Marque entrega ou coleta para cobrar transporte."})
+        if attrs.get("delivery_transport_required", getattr(self.instance, "delivery_transport_required", False)) and not attrs.get(
+            "delivery_address", getattr(self.instance, "delivery_address", "")
+        ).strip():
+            raise serializers.ValidationError({"delivery_address": "Informe o endereço da entrega."})
+        if attrs.get("return_transport_required", getattr(self.instance, "return_transport_required", False)) and not attrs.get(
+            "return_address", getattr(self.instance, "return_address", "")
+        ).strip():
+            raise serializers.ValidationError({"return_address": "Informe o endereço da coleta."})
         if discount < 0:
             raise serializers.ValidationError({"discount": "O desconto não pode ser negativo."})
-        if effective_items and discount > calculated_subtotal:
-            raise serializers.ValidationError({"discount": "O desconto não pode superar o subtotal do orçamento."})
+        if effective_items and discount > calculated_subtotal + transport_fee:
+            raise serializers.ValidationError({"discount": "O desconto não pode superar o valor dos equipamentos e frete."})
         if status == RentalQuote.Status.APPROVED:
             request = self.context.get("request")
             if request and not request.user.has_acl("rentals.approve"):
@@ -210,6 +233,7 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
             quote.save(update_fields=(*changed, "updated_at"))
         ensure_inspections(quote, RentalInspection.Type.PRE_RENTAL)
         ensure_pre_rental_orders(quote, self.context["request"].user)
+        ensure_transport_task(quote, TransportTask.Leg.DELIVERY, self.context["request"].user)
         for line in quote.items.select_related("equipment"):
             refresh_equipment_status(line.equipment)
 

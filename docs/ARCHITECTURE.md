@@ -23,6 +23,7 @@ A locação e a manutenção não dependem da disponibilidade de IA. Uma futura 
 | `assets` | categoria, equipamento, QR token e acervo de mídias |
 | `maintenance` | plano, alertas, ordem de serviço, atividades e liberação |
 | `rentals` | orçamento, reserva, inspeções, entrega, prorrogação, devolução e disponibilidade |
+| `logistics` | frota, viagem de entrega e coleta opcional por locação |
 | `core` | dashboard, auditoria e configuração compartilhada |
 
 ## Regras críticas implementadas
@@ -44,11 +45,14 @@ A locação e a manutenção não dependem da disponibilidade de IA. Uma futura 
 15. A prorrogação repete a verificação de disponibilidade e preserva o histórico de datas e condições.
 16. A devolução mantém o equipamento indisponível até a inspeção final; avarias geram OS pós-locação.
 17. Planos podem vencer por data ou horas de uso, com faixas de aviso configuráveis.
+18. A opção de transporte é definida no orçamento; o preço do frete entra no total recalculado no servidor.
+19. A viagem de entrega só inicia após inspeção e OS pré-locação liberadas, e a entrega só é registrada após a viagem concluída.
+20. Quando há coleta contratada, a devolução só é registrada após a viagem de retorno concluída. Veículos em viagem não podem ser atribuídos a outra viagem.
 
 ## Ciclo da locação
 
 ```text
-Rascunho/Enviado → Reservado → Em locação → Devolvido/em inspeção → Concluído
+Rascunho/Enviado → Reservado → Inspeção pré-locação → [Transporte de entrega] → Em locação → [Coleta] → Devolvido/em inspeção → Concluído
         │              │
         └──────────────┴──→ Cancelado (antes da entrega)
 ```

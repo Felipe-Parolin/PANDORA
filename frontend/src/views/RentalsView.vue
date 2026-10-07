@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   AlertCircle, CalendarRange, Check, CheckCircle2, ChevronRight, CirclePlus,
   ClipboardCheck, Clock3, PackageCheck, Pencil, Plus, RotateCcw, Search, Trash2,
-  Truck, XCircle,
+  Truck, XCircle, Route,
 } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import ModalDialog from '../components/ModalDialog.vue'
@@ -29,14 +29,15 @@ const availabilityChecked = ref(false)
 const inspectionContext = ref(null)
 const operation = ref(null)
 const operationQuote = ref(null)
+const flowQuote = ref(null)
 const notice = ref('')
 const operationForm = reactive({ date: '', conditions: '', new_end_date: '', reason: '' })
 
-const form = reactive({ customer: '', start_date: '', end_date: '', status: 'DRAFT', conditions: '', discount: 0, notes: '', items: [] })
+const form = reactive({ customer: '', start_date: '', end_date: '', status: 'DRAFT', conditions: '', discount: 0, notes: '', items: [], delivery_transport_required: false, return_transport_required: false, delivery_address: '', return_address: '', transport_fee: 0 })
 const days = computed(() => form.start_date && form.end_date ? Math.max(Math.round((new Date(`${form.end_date}T12:00:00`) - new Date(`${form.start_date}T12:00:00`)) / 86400000) + 1, 1) : 1)
-const periodValid = computed(() => form.customer && form.start_date && form.end_date && form.end_date >= form.start_date)
+const periodValid = computed(() => form.customer && form.start_date && form.end_date && form.end_date >= form.start_date && (!form.delivery_transport_required || form.delivery_address.trim()) && (!form.return_transport_required || form.return_address.trim()))
 const subtotal = computed(() => form.items.reduce((sum, item) => sum + Number(item.daily_rate) * days.value, 0))
-const total = computed(() => Math.max(subtotal.value - Number(form.discount || 0), 0))
+const total = computed(() => Math.max(subtotal.value + Number(form.transport_fee || 0) - Number(form.discount || 0), 0))
 const activeQuotes = computed(() => quotes.value.filter(item => ['DRAFT', 'SENT', 'APPROVED', 'ACTIVE', 'RETURNED'].includes(item.status)))
 const tabMatches = (quote, key) => ({
   ALL: true,
@@ -79,6 +80,20 @@ const inspectionProgress = (quote, type) => {
   const items = quote.inspections?.filter(item => item.inspection_type === type) || []
   return { done: items.filter(item => item.result !== 'PENDING').length, total: quote.items.length }
 }
+const taskFor = (quote, leg) => quote.transport_tasks?.find(task => task.leg === leg)
+const transportReady = (quote, leg) => !(leg === 'DELIVERY' ? quote.delivery_transport_required : quote.return_transport_required) || taskFor(quote, leg)?.status === 'COMPLETED'
+const inspectionsReleased = quote => inspectionProgress(quote, 'PRE_RENTAL').done === inspectionProgress(quote, 'PRE_RENTAL').total && !quote.inspections.some(item => item.inspection_type === 'PRE_RENTAL' && item.result === 'BLOCKED')
+function flowSteps(quote) {
+  const stage = quote.status
+  return [
+    { label: 'Orçamento e reserva', detail: stage === 'DRAFT' || stage === 'SENT' ? 'Aguardando aprovação' : 'Reserva confirmada', done: !['DRAFT', 'SENT', 'CANCELLED', 'EXPIRED'].includes(stage), link: null },
+    { label: 'Inspeção pré-locação', detail: `${inspectionProgress(quote, 'PRE_RENTAL').done}/${inspectionProgress(quote, 'PRE_RENTAL').total} equipamento(s)`, done: quote.items.length > 0 && inspectionsReleased(quote), link: can('maintenance.view') ? { name: 'maintenance', query: { quote: quote.number } } : null },
+    ...(quote.delivery_transport_required ? [{ label: 'Transporte de entrega', detail: taskFor(quote, 'DELIVERY')?.status_label || 'Após a reserva', done: transportReady(quote, 'DELIVERY'), link: can('logistics.view') ? { name: 'logistics', query: { quote: quote.number } } : null }] : []),
+    { label: 'Entrega e locação', detail: quote.delivered_at ? shortDate(quote.delivered_at.slice(0, 10)) : 'Aguardando entrega', done: ['ACTIVE', 'RETURNED', 'COMPLETED'].includes(stage), link: null },
+    ...(quote.return_transport_required ? [{ label: 'Coleta de devolução', detail: taskFor(quote, 'RETURN')?.status_label || 'Após a entrega', done: transportReady(quote, 'RETURN'), link: can('logistics.view') ? { name: 'logistics', query: { quote: quote.number } } : null }] : []),
+    { label: 'Inspeção final e conclusão', detail: `${inspectionProgress(quote, 'RETURN').done}/${inspectionProgress(quote, 'RETURN').total} equipamento(s)`, done: stage === 'COMPLETED', link: null },
+  ]
+}
 
 function localDateTime() {
   const date = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
@@ -103,7 +118,7 @@ async function reserve(quote) {
   notice.value = ''
   try {
     await api.post(`/rental-quotes/${quote.id}/reserve/`)
-    notice.value = `${quote.number} reservada. Os chamados de inspeção pré-locação foram abertos na Manutenção.`
+    notice.value = `${quote.number} reservada. Chamados de inspeção pré-locação abertos na Manutenção.${quote.delivery_transport_required ? ' A viagem de entrega foi criada em Transporte.' : ''}`
     await load()
   } catch (event) { error.value = apiError(event) }
   finally { busy.value = false }
@@ -157,6 +172,8 @@ function open(item = null) {
     Object.assign(form, {
       customer: item.customer, start_date: item.start_date, end_date: item.end_date, status: item.status,
       conditions: item.conditions, discount: item.discount, notes: item.notes,
+      delivery_transport_required: item.delivery_transport_required, return_transport_required: item.return_transport_required,
+      delivery_address: item.delivery_address, return_address: item.return_address, transport_fee: item.transport_fee,
       items: item.items.map(line => ({ equipment_id: line.equipment, name: line.equipment_name, code: line.internal_code, daily_rate: line.daily_rate, quantity_days: line.quantity_days })),
     })
   } else {
@@ -164,7 +181,8 @@ function open(item = null) {
     const later = new Date(Date.now() + 3 * 86400000)
     Object.assign(form, {
       customer: customers.value[0]?.id || '', start_date: today.toISOString().slice(0, 10), end_date: later.toISOString().slice(0, 10), status: 'DRAFT',
-      conditions: 'Retirada e devolução no balcão. Combustível e transporte por conta do cliente.', discount: 0, notes: '', items: [],
+      conditions: 'Combustível por conta do cliente. Entrega e coleta conforme opções do orçamento.', discount: 0, notes: '', items: [],
+      delivery_transport_required: false, return_transport_required: false, delivery_address: '', return_address: '', transport_fee: 0,
     })
   }
 }
@@ -204,6 +222,9 @@ function toggle(item) {
 watch(() => [form.start_date, form.end_date], () => {
   availabilityChecked.value = false
   form.items.forEach(item => { item.quantity_days = days.value })
+})
+watch(() => [form.delivery_transport_required, form.return_transport_required], ([delivery, returning]) => {
+  if (!delivery && !returning) form.transport_fee = 0
 })
 
 async function save() {
@@ -258,15 +279,18 @@ onMounted(load)
         <tr v-for="quote in filteredQuotes" :key="quote.id">
           <td><strong>{{ quote.number }}</strong><small>{{ shortDate(quote.created_at?.slice(0, 10)) }} · {{ quote.created_by_name }}</small></td>
           <td>{{ quote.customer_name }}</td><td>{{ shortDate(quote.start_date) }} → {{ shortDate(quote.end_date) }}</td><td>{{ quote.items.length }} equipamento(s)</td>
-          <td><StatusBadge :value="quote.status" :label="quote.status_label" /><small v-if="quote.status === 'APPROVED'">Manutenção · pré-inspeção {{ inspectionProgress(quote, 'PRE_RENTAL').done }}/{{ inspectionProgress(quote, 'PRE_RENTAL').total }}</small><small v-if="quote.status === 'RETURNED'">Inspeção final {{ inspectionProgress(quote, 'RETURN').done }}/{{ inspectionProgress(quote, 'RETURN').total }}</small></td>
+          <td><StatusBadge :value="quote.status" :label="quote.status_label" /><small v-if="quote.status === 'APPROVED'">Manutenção · pré-inspeção {{ inspectionProgress(quote, 'PRE_RENTAL').done }}/{{ inspectionProgress(quote, 'PRE_RENTAL').total }}</small><small v-if="quote.status === 'RETURNED'">Inspeção final {{ inspectionProgress(quote, 'RETURN').done }}/{{ inspectionProgress(quote, 'RETURN').total }}</small><small v-if="quote.delivery_transport_required || quote.return_transport_required">Transporte {{ quote.delivery_transport_required && quote.return_transport_required ? 'ida e volta' : quote.delivery_transport_required ? 'de entrega' : 'de coleta' }}</small></td>
           <td class="right"><strong>{{ money(quote.total) }}</strong></td>
           <td class="right"><div class="row-actions rental-row-actions">
+            <button class="icon-btn table-action" title="Ver fluxo da locação" @click="flowQuote = quote"><Route :size="17" /></button>
             <button v-if="can('rentals.manage') && ['DRAFT', 'SENT'].includes(quote.status)" class="icon-btn table-action" title="Editar orçamento" @click="open(quote)"><Pencil :size="17" /></button>
             <button v-if="can('rentals.approve') && ['DRAFT', 'SENT'].includes(quote.status)" class="icon-btn success-action" title="Aprovar e reservar" :disabled="busy" @click="reserve(quote)"><PackageCheck :size="17" /></button>
             <router-link v-if="can('maintenance.view') && quote.status === 'APPROVED'" class="icon-btn table-action" title="Ver chamados de pré-locação na manutenção" :to="{ name: 'maintenance', query: { quote: quote.number } }"><ClipboardCheck :size="17" /></router-link>
-            <button v-if="can('rentals.dispatch') && quote.status === 'APPROVED'" class="icon-btn success-action" title="Registrar entrega" :disabled="inspectionProgress(quote, 'PRE_RENTAL').done !== inspectionProgress(quote, 'PRE_RENTAL').total || quote.inspections.some(item => item.inspection_type === 'PRE_RENTAL' && item.result === 'BLOCKED')" @click="openOperation('deliver', quote)"><Truck :size="17" /></button>
+            <router-link v-if="can('logistics.view') && quote.status === 'APPROVED' && quote.delivery_transport_required" class="icon-btn table-action" title="Planejar transporte de entrega" :to="{ name: 'logistics', query: { quote: quote.number } }"><Truck :size="17" /></router-link>
+            <button v-if="can('rentals.dispatch') && quote.status === 'APPROVED'" class="icon-btn success-action" :title="!transportReady(quote, 'DELIVERY') ? 'Conclua a viagem de entrega' : 'Registrar entrega'" :disabled="!inspectionsReleased(quote) || !transportReady(quote, 'DELIVERY')" @click="openOperation('deliver', quote)"><PackageCheck :size="17" /></button>
             <button v-if="can('rentals.extend') && ['APPROVED', 'ACTIVE'].includes(quote.status)" class="icon-btn table-action" title="Prorrogar locação" @click="openOperation('extend', quote)"><CalendarRange :size="17" /></button>
-            <button v-if="can('rentals.return') && quote.status === 'ACTIVE'" class="icon-btn table-action" title="Registrar devolução" @click="openOperation('return', quote)"><RotateCcw :size="17" /></button>
+            <router-link v-if="can('logistics.view') && quote.status === 'ACTIVE' && quote.return_transport_required" class="icon-btn table-action" title="Planejar coleta de devolução" :to="{ name: 'logistics', query: { quote: quote.number } }"><Truck :size="17" /></router-link>
+            <button v-if="can('rentals.return') && quote.status === 'ACTIVE'" class="icon-btn table-action" :title="!transportReady(quote, 'RETURN') ? 'Conclua a coleta de devolução' : 'Registrar devolução'" :disabled="!transportReady(quote, 'RETURN')" @click="openOperation('return', quote)"><RotateCcw :size="17" /></button>
             <button v-if="['RETURNED', 'COMPLETED'].includes(quote.status)" class="icon-btn table-action" title="Inspeção final" @click="inspectionContext = { quote, type: 'RETURN' }"><ClipboardCheck :size="17" /></button>
             <button v-if="can('rentals.return') && quote.status === 'RETURNED'" class="icon-btn success-action" title="Concluir devolução" :disabled="inspectionProgress(quote, 'RETURN').done !== inspectionProgress(quote, 'RETURN').total" @click="finalizeReturn(quote)"><CheckCircle2 :size="17" /></button>
             <button v-if="can('rentals.manage') && ['DRAFT', 'SENT', 'APPROVED'].includes(quote.status)" class="icon-btn danger-icon" title="Cancelar" @click="openOperation('cancel', quote)"><XCircle :size="17" /></button>
@@ -275,13 +299,16 @@ onMounted(load)
         </tr><tr v-if="!filteredQuotes.length"><td colspan="7" class="empty-cell">Nenhuma locação nesta etapa.</td></tr>
       </tbody></table></div>
       <div class="mobile-card-list"><article v-for="quote in filteredQuotes" :key="quote.id" class="mobile-record-card rental-mobile-card"><header><div><span class="eyebrow">{{ quote.number }}</span><strong>{{ quote.customer_name }}</strong></div><StatusBadge :value="quote.status" :label="quote.status_label" /></header><dl><div><dt>Período</dt><dd>{{ shortDate(quote.start_date) }} → {{ shortDate(quote.end_date) }}</dd></div><div><dt>Equipamentos</dt><dd>{{ quote.items.length }}</dd></div><div><dt>Total</dt><dd><strong>{{ money(quote.total) }}</strong></dd></div></dl><footer>
+        <button class="btn secondary" @click="flowQuote = quote"><Route :size="15" />Ver fluxo</button>
         <button v-if="can('rentals.manage') && ['DRAFT', 'SENT'].includes(quote.status)" class="btn secondary" @click="open(quote)"><Pencil :size="15" />Editar</button>
         <button v-if="can('rentals.approve') && ['DRAFT', 'SENT'].includes(quote.status)" class="btn primary" @click="reserve(quote)"><PackageCheck :size="15" />Reservar</button>
         <router-link v-if="can('maintenance.view') && quote.status === 'APPROVED'" class="btn secondary" :to="{ name: 'maintenance', query: { quote: quote.number } }"><ClipboardCheck :size="15" />Ver chamados</router-link>
         <span v-else-if="quote.status === 'APPROVED'" class="rental-inspection-note">Pré-locação na Manutenção: {{ inspectionProgress(quote, 'PRE_RENTAL').done }}/{{ inspectionProgress(quote, 'PRE_RENTAL').total }}</span>
-        <button v-if="can('rentals.dispatch') && quote.status === 'APPROVED'" class="btn primary" :disabled="inspectionProgress(quote, 'PRE_RENTAL').done !== inspectionProgress(quote, 'PRE_RENTAL').total || quote.inspections.some(item => item.inspection_type === 'PRE_RENTAL' && item.result === 'BLOCKED')" @click="openOperation('deliver', quote)"><Truck :size="15" />Entregar</button>
+        <router-link v-if="can('logistics.view') && quote.status === 'APPROVED' && quote.delivery_transport_required" class="btn secondary" :to="{ name: 'logistics', query: { quote: quote.number } }"><Truck :size="15" />Entrega · transporte</router-link>
+        <button v-if="can('rentals.dispatch') && quote.status === 'APPROVED'" class="btn primary" :disabled="!inspectionsReleased(quote) || !transportReady(quote, 'DELIVERY')" @click="openOperation('deliver', quote)"><PackageCheck :size="15" />Entregar</button>
         <button v-if="can('rentals.extend') && ['APPROVED', 'ACTIVE'].includes(quote.status)" class="btn secondary" @click="openOperation('extend', quote)"><CalendarRange :size="15" />Prorrogar</button>
-        <button v-if="can('rentals.return') && quote.status === 'ACTIVE'" class="btn primary" @click="openOperation('return', quote)"><RotateCcw :size="15" />Devolver</button>
+        <router-link v-if="can('logistics.view') && quote.status === 'ACTIVE' && quote.return_transport_required" class="btn secondary" :to="{ name: 'logistics', query: { quote: quote.number } }"><Truck :size="15" />Coleta · transporte</router-link>
+        <button v-if="can('rentals.return') && quote.status === 'ACTIVE'" class="btn primary" :disabled="!transportReady(quote, 'RETURN')" @click="openOperation('return', quote)"><RotateCcw :size="15" />Devolver</button>
         <button v-if="['RETURNED', 'COMPLETED'].includes(quote.status)" class="btn secondary" @click="inspectionContext = { quote, type: 'RETURN' }"><ClipboardCheck :size="15" />Inspeção final</button>
         <button v-if="can('rentals.return') && quote.status === 'RETURNED'" class="btn primary" :disabled="inspectionProgress(quote, 'RETURN').done !== inspectionProgress(quote, 'RETURN').total" @click="finalizeReturn(quote)"><CheckCircle2 :size="15" />Concluir</button>
       </footer></article></div>
@@ -294,6 +321,9 @@ onMounted(load)
           <div class="form-field span-2"><label>Cliente</label><select v-model="form.customer" required><option v-for="customer in customers" :key="customer.id" :value="customer.id">{{ customer.name }} · {{ customer.document }}</option></select></div>
           <div class="form-field"><label>Início</label><input v-model="form.start_date" type="date" required /></div><div class="form-field"><label>Fim previsto</label><input v-model="form.end_date" type="date" :min="form.start_date" required /></div>
           <div class="form-field span-2"><label>Etapa comercial</label><select v-model="form.status"><option value="DRAFT">Rascunho</option><option value="SENT">Enviado ao cliente</option></select></div>
+          <div class="form-field span-2"><label>Logística opcional</label><div class="transport-choices"><label><input v-model="form.delivery_transport_required" type="checkbox" /> Entrega com veículo</label><label><input v-model="form.return_transport_required" type="checkbox" /> Coleta de devolução</label></div><small>Sem transporte marcado, o cliente retira ou devolve no balcão.</small></div>
+          <div v-if="form.delivery_transport_required" class="form-field span-2"><label>Endereço da entrega</label><input v-model="form.delivery_address" required maxlength="255" placeholder="Rua, número, bairro, Leme/SP e referência" /></div>
+          <div v-if="form.return_transport_required" class="form-field span-2"><label>Endereço da coleta</label><input v-model="form.return_address" required maxlength="255" placeholder="Rua, número, bairro, Leme/SP e referência" /></div>
           <div class="period-callout span-2"><CalendarRange :size="20" /><div><strong>{{ days }} diária(s)</strong><span>A próxima etapa valida conflitos de locação e bloqueios de manutenção.</span></div></div>
         </div>
 
@@ -309,12 +339,18 @@ onMounted(load)
 
         <div v-if="step === 3" class="quote-builder">
           <div class="quote-lines"><div v-for="item in form.items" :key="item.equipment_id" class="quote-line"><div><strong>{{ item.name }}</strong><span>{{ item.code }} · {{ days }} diária(s)</span></div><label class="rate-editor"><span>Diária</span><input v-model="item.daily_rate" type="number" min="0" step="0.01" /></label><strong>{{ money(Number(item.daily_rate) * days) }}</strong><button type="button" class="icon-btn" title="Remover equipamento" @click="toggle({ id: item.equipment_id })"><Trash2 :size="17" /></button></div><div class="form-field"><label>Condições comerciais</label><textarea v-model="form.conditions" rows="3" /></div><div class="form-field"><label>Observações internas</label><textarea v-model="form.notes" rows="3" placeholder="Informações que não fazem parte das condições enviadas ao cliente." /></div></div>
-          <aside class="quote-total"><span>Subtotal <strong>{{ money(subtotal) }}</strong></span><label>Desconto <input v-model="form.discount" type="number" min="0" :max="subtotal" step="0.01" /></label><div>Total <strong>{{ money(total) }}</strong></div><p>A aprovação reserva os equipamentos e repete a validação de conflitos.</p></aside>
+          <aside class="quote-total"><span>Equipamentos <strong>{{ money(subtotal) }}</strong></span><label v-if="form.delivery_transport_required || form.return_transport_required">Transporte (total) <input v-model="form.transport_fee" type="number" min="0" step="0.01" /></label><label>Desconto <input v-model="form.discount" type="number" min="0" :max="subtotal + Number(form.transport_fee || 0)" step="0.01" /></label><div>Total <strong>{{ money(total) }}</strong></div><p>A aprovação reserva os equipamentos e abre os chamados técnicos. Viagens opcionais são planejadas depois.</p></aside>
         </div>
 
         <div v-if="error" class="error-message">{{ error }}</div>
         <div class="modal-actions"><button v-if="step > 1" type="button" class="btn secondary" @click="step--">Voltar</button><button v-else type="button" class="btn secondary" @click="modal = false">Cancelar</button><span class="spacer" /><button v-if="step < 3" type="button" class="btn primary" :disabled="busy || availabilityLoading || (step === 1 && !periodValid) || (step === 2 && !form.items.length)" @click="nextStep">{{ availabilityLoading ? 'Validando...' : 'Continuar' }} <ChevronRight :size="17" /></button><button v-else class="btn primary" :disabled="busy || !form.items.length"><CirclePlus :size="17" />{{ busy ? 'Salvando...' : (editing ? 'Salvar alterações' : 'Salvar orçamento') }}</button></div>
       </form>
+    </ModalDialog>
+    <ModalDialog v-if="flowQuote" :title="`Fluxo da locação · ${flowQuote.number}`" @close="flowQuote = null">
+      <div class="operation-context"><span class="eyebrow">{{ flowQuote.customer_name }}</span><strong>{{ shortDate(flowQuote.start_date) }} → {{ shortDate(flowQuote.end_date) }}</strong><small>{{ flowQuote.items.length }} equipamento(s) · {{ money(flowQuote.total) }}</small></div>
+      <ol class="rental-flow-list"><li v-for="(item, index) in flowSteps(flowQuote)" :key="index" :class="{ done: item.done }"><span class="flow-step-icon"><Check v-if="item.done" :size="16" /><span v-else>{{ index + 1 }}</span></span><div><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></div><router-link v-if="item.link" class="btn secondary" :to="item.link" @click="flowQuote = null">Abrir</router-link></li></ol>
+      <div v-if="flowQuote.status === 'CANCELLED'" class="period-callout">Reserva cancelada: {{ flowQuote.cancellation_reason }}</div>
+      <div class="modal-actions"><span class="spacer" /><button type="button" class="btn secondary" @click="flowQuote = null">Fechar</button></div>
     </ModalDialog>
     <ModalDialog v-if="operation && operationQuote" :title="({ deliver: 'Registrar entrega', extend: 'Prorrogar locação', return: 'Registrar devolução', cancel: 'Cancelar locação' })[operation]" @close="operation = null">
       <form @submit.prevent="submitOperation"><div class="form-grid">

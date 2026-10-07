@@ -24,6 +24,11 @@ class RentalQuote(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     conditions = models.TextField(blank=True)
     notes = models.TextField(blank=True)
+    delivery_transport_required = models.BooleanField(default=False)
+    return_transport_required = models.BooleanField(default=False)
+    delivery_address = models.CharField(max_length=255, blank=True)
+    return_address = models.CharField(max_length=255, blank=True)
+    transport_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -57,7 +62,7 @@ class RentalQuote(models.Model):
     def recalculate(self):
         subtotal = sum((item.total for item in self.items.all()), Decimal("0"))
         self.subtotal = subtotal
-        self.total = max(subtotal - self.discount, Decimal("0"))
+        self.total = max(subtotal + self.transport_fee - self.discount, Decimal("0"))
         self.save(update_fields=("subtotal", "total", "updated_at"))
 
 

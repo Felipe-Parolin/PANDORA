@@ -18,6 +18,9 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 - abandono de chamado com justificativa obrigatória, datas de transição e redistribuição visível;
 - ordens preventivas/corretivas, técnico, atividades e liberação técnica;
 - orçamento de locação por cliente, período e múltiplos equipamentos;
+- transporte opcional de entrega e/ou coleta, com endereço e valor discriminado no orçamento;
+- cadastro de veículos e planejamento de viagens com motorista, horário, status e histórico protegido;
+- fluxo integrado: reserva abre inspeção na Manutenção; liberação técnica precede a viagem; viagem concluída precede a entrega ou devolução quando o transporte é contratado;
 - disponibilidade validada antes da seleção, com motivo dos bloqueios por equipamento;
 - cálculo automático de diárias, preço negociado por item, desconto e total;
 - bloqueio de sobreposição quando o orçamento vira reserva aprovada;
@@ -31,7 +34,7 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 - dashboard, listas em cartões e modais responsivos para desktop e celular;
 - dados demonstrativos e testes automatizados.
 
-Emissão fiscal, cobrança, portal externo, IoT e decisões automáticas por IA continuam fora desta etapa, em conformidade com o Plano de Escopo.
+Emissão fiscal **real**, cobrança, portal externo, IoT e decisões automáticas por IA continuam fora desta etapa. A operação de locação não gera nota fiscal nem documento fiscal de transporte. A integração fiscal exigirá validação com a contabilidade da empresa antes de configurar regime, inscrição e documentos aplicáveis em Leme/SP.
 
 ## Estrutura
 
@@ -43,6 +46,7 @@ PANDORA/
 │   ├── assets/             # categorias, equipamentos e mídias
 │   ├── maintenance/        # planos, OS e padrões criacionais
 │   ├── rentals/            # orçamentos, itens e disponibilidade
+│   ├── logistics/          # veículos e viagens opcionais da locação
 │   ├── core/               # dashboard, auditoria e configuração de IA
 │   └── config/             # settings e roteamento
 ├── frontend/               # Vue 3 + Vite
@@ -112,6 +116,9 @@ pnpm build
 ```
 
 Consulte [Arquitetura](docs/ARCHITECTURE.md) e [Contrato inicial da API](docs/API.md) para decisões de domínio, regras e endpoints.
+Para a emissão fiscal futura em Leme/SP, consulte [Preparação fiscal](docs/FISCAL_READINESS.md).
+
+Após atualizar uma instalação existente, execute `python manage.py migrate` e entre novamente no sistema para atualizar as permissões de Transporte na interface.
 
 Os fluxos de locação implementam os cards [#37](https://github.com/Felipe-Parolin/PANDORA/issues/37), [#38](https://github.com/Felipe-Parolin/PANDORA/issues/38), [#39](https://github.com/Felipe-Parolin/PANDORA/issues/39), [#40](https://github.com/Felipe-Parolin/PANDORA/issues/40) e [#41](https://github.com/Felipe-Parolin/PANDORA/issues/41).
 

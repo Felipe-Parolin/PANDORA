@@ -4,7 +4,7 @@ const tone = () => {
   const value = props.value || ''
   if (['AVAILABLE', 'APPROVED', 'APPROVED_WITH_NOTES', 'COMPLETED', 'OK', 'ACTIVE'].includes(value)) return 'success'
   if (['MAINTENANCE', 'CRITICAL', 'OVERDUE', 'CANCELLED', 'INACTIVE', 'ABANDONED', 'BLOCKED'].includes(value)) return 'danger'
-  if (['SENT', 'SCHEDULED', 'UPCOMING', 'RESERVED', 'RETURNED', 'PENDING', 'INSPECTION'].includes(value)) return 'warning'
+  if (['SENT', 'SCHEDULED', 'UPCOMING', 'RESERVED', 'RETURNED', 'PENDING', 'INSPECTION', 'PLANNED'].includes(value)) return 'warning'
   return 'neutral'
 }
 </script>

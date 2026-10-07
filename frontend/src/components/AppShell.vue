@@ -1,7 +1,7 @@
 <script setup>
 import { useRoute } from 'vue-router'
 import { computed, ref } from 'vue'
-import { LayoutDashboard, UsersRound, Wrench, PackageOpen, ClipboardList, Bell, Search, LogOut, Menu, X } from 'lucide-vue-next'
+import { LayoutDashboard, UsersRound, Wrench, PackageOpen, ClipboardList, Bell, Search, LogOut, Menu, X, Truck } from 'lucide-vue-next'
 import { auth, can, logout } from '../services/api'
 
 const route = useRoute()
@@ -12,6 +12,7 @@ const nav = computed(() => [
   { to: '/equipamentos', label: 'Equipamentos', icon: PackageOpen, permission: 'assets.view' },
   { to: '/manutencao', label: 'Manutenção', icon: Wrench, permission: 'maintenance.view' },
   { to: '/locacoes', label: 'Locações', icon: ClipboardList, permission: 'rentals.view' },
+  { to: '/transporte', label: 'Transporte', icon: Truck, permission: 'logistics.view' },
 ].filter(item => can(item.permission)))
 const active = (path) => path === '/' ? route.path === '/' : route.path.startsWith(path)
 </script>

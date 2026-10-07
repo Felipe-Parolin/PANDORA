@@ -12,6 +12,8 @@ from assets.models import Equipment
 from assets.serializers import EquipmentSerializer
 from core.models import AuditLog
 from maintenance.models import ServiceOrder
+from logistics.models import TransportTask
+from logistics.services import ensure_transport_task, transport_completed
 from .models import RentalExtension, RentalInspection, RentalQuote
 from .serializers import RentalInspectionSerializer, RentalQuoteSerializer
 from .services import availability_reason, ensure_inspections, ensure_pre_rental_orders, refresh_equipment_status
@@ -20,7 +22,7 @@ from .services import availability_reason, ensure_inspections, ensure_pre_rental
 class RentalQuoteViewSet(ModelViewSet):
     queryset = RentalQuote.objects.select_related(
         "customer", "created_by", "reserved_by", "delivered_by", "returned_by", "cancelled_by"
-    ).prefetch_related("items__equipment", "inspections__equipment__category", "extensions__created_by")
+    ).prefetch_related("items__equipment", "inspections__equipment__category", "extensions__created_by", "transport_tasks__vehicle", "transport_tasks__driver")
     serializer_class = RentalQuoteSerializer
     permission_classes = [ACLPermission]
     acl_view = "rentals.view"
@@ -75,6 +77,7 @@ class RentalQuoteViewSet(ModelViewSet):
         quote.save(update_fields=("status", "reserved_by", "reserved_at", "updated_at"))
         ensure_inspections(quote, RentalInspection.Type.PRE_RENTAL)
         ensure_pre_rental_orders(quote, request.user)
+        ensure_transport_task(quote, TransportTask.Leg.DELIVERY, request.user)
         for item in equipment:
             refresh_equipment_status(item)
         self._audit(request, quote, "RESERVED", status=quote.status, equipment=[item.internal_code for item in equipment])
@@ -89,11 +92,16 @@ class RentalQuoteViewSet(ModelViewSet):
         reason = str(request.data.get("reason", "")).strip()
         if not reason:
             raise ValidationError({"reason": "Informe o motivo do cancelamento."})
+        if quote.transport_tasks.filter(status=TransportTask.Status.IN_TRANSIT).exists() or quote.transport_tasks.filter(
+            leg=TransportTask.Leg.DELIVERY, status=TransportTask.Status.COMPLETED
+        ).exists():
+            raise ValidationError({"transport": "Há equipamento em transporte ou já entregue ao destino. Conclua o fluxo de entrega e devolução."})
         quote.status = RentalQuote.Status.CANCELLED
         quote.cancelled_by = request.user
         quote.cancelled_at = timezone.now()
         quote.cancellation_reason = reason
         quote.save(update_fields=("status", "cancelled_by", "cancelled_at", "cancellation_reason", "updated_at"))
+        quote.transport_tasks.filter(status=TransportTask.Status.PLANNED).update(status=TransportTask.Status.CANCELLED)
         for inspection in quote.inspections.filter(inspection_type=RentalInspection.Type.PRE_RENTAL):
             order = ServiceOrder.objects.filter(rental_inspection=inspection).first()
             if order and order.status not in {ServiceOrder.Status.COMPLETED, ServiceOrder.Status.CANCELLED} and inspection.result != RentalInspection.Result.BLOCKED:
@@ -122,6 +130,8 @@ class RentalQuoteViewSet(ModelViewSet):
         ).exists()]
         if unfinished:
             raise ValidationError({"inspections": f"A inspeção na manutenção ainda não liberou: {', '.join(unfinished)}."})
+        if quote.delivery_transport_required and not transport_completed(quote, TransportTask.Leg.DELIVERY):
+            raise ValidationError({"transport": "Conclua a viagem de entrega antes de registrar a locação como entregue."})
         equipment_ids = quote.items.values_list("equipment_id", flat=True)
         equipment = list(Equipment.objects.select_for_update().filter(pk__in=equipment_ids).order_by("pk"))
         conflicts = {item.internal_code: reason for item in equipment if (reason := availability_reason(item, quote.start_date, quote.end_date, quote))}
@@ -139,6 +149,7 @@ class RentalQuoteViewSet(ModelViewSet):
         quote.delivered_at = delivery_time
         quote.delivery_conditions = str(request.data.get("conditions", "")).strip()
         quote.save(update_fields=("status", "delivered_by", "delivered_at", "delivery_conditions", "updated_at"))
+        ensure_transport_task(quote, TransportTask.Leg.RETURN, request.user)
         for inspection in inspections:
             line = quote.items.get(equipment=inspection.equipment)
             line.condition_out = f"{inspection.get_condition_display()}. {inspection.observations}".strip()
@@ -194,6 +205,8 @@ class RentalQuoteViewSet(ModelViewSet):
         quote = RentalQuote.objects.select_for_update().get(pk=self.get_object().pk)
         if quote.status != RentalQuote.Status.ACTIVE:
             raise ValidationError({"status": "Somente locações entregues podem ser devolvidas."})
+        if quote.return_transport_required and not transport_completed(quote, TransportTask.Leg.RETURN):
+            raise ValidationError({"transport": "Conclua a coleta de devolução antes de registrar o retorno."})
         returned_at = request.data.get("returned_at")
         try:
             return_time = datetime.fromisoformat(returned_at) if returned_at else timezone.now()
@@ -247,6 +260,8 @@ class RentalQuoteViewSet(ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         quote = self.get_object()
+        if quote.transport_tasks.exists():
+            return Response({"detail": "Há viagens vinculadas. Mantenha a locação para preservar o histórico."}, status=status.HTTP_409_CONFLICT)
         if ServiceOrder.objects.filter(rental_inspection__quote=quote).exists():
             return Response({"detail": "Há chamados de manutenção vinculados. Mantenha a locação para preservar o histórico."}, status=status.HTTP_409_CONFLICT)
         if quote.status not in {RentalQuote.Status.DRAFT, RentalQuote.Status.SENT, RentalQuote.Status.CANCELLED, RentalQuote.Status.EXPIRED}:

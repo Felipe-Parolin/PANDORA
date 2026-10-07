@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     "assets",
     "maintenance",
     "rentals",
+    "logistics",
 ]
 
 MIDDLEWARE = [

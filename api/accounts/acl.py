@@ -12,6 +12,8 @@ PERMISSION_CATALOG = [
     {"code": "maintenance.view", "label": "Consultar manutenção e ordens", "module": "Manutenção"},
     {"code": "maintenance.manage", "label": "Cadastrar, editar e excluir manutenções", "module": "Manutenção"},
     {"code": "maintenance.release", "label": "Liberar equipamento após manutenção", "module": "Manutenção"},
+    {"code": "logistics.view", "label": "Consultar viagens e veículos", "module": "Transporte"},
+    {"code": "logistics.manage", "label": "Planejar viagens e cadastrar veículos", "module": "Transporte"},
     {"code": "rentals.view", "label": "Consultar orçamentos e locações", "module": "Locações"},
     {"code": "rentals.manage", "label": "Cadastrar, editar e excluir orçamentos", "module": "Locações"},
     {"code": "rentals.approve", "label": "Aprovar orçamento e reservar equipamento", "module": "Locações"},
@@ -36,6 +38,7 @@ DEFAULT_GROUPS = {
             "dashboard.view", "accounts.users.view", "customers.view", "customers.manage",
             "assets.view", "media.view", "media.manage", "rentals.view", "rentals.manage",
             "rentals.approve", "rentals.inspect", "rentals.dispatch", "rentals.extend", "rentals.return",
+            "logistics.view", "logistics.manage",
         ],
     },
     "MAINTENANCE": {
@@ -44,7 +47,7 @@ DEFAULT_GROUPS = {
         "permissions": [
             "dashboard.view", "accounts.users.view", "assets.view", "media.view", "media.manage",
             "maintenance.view", "maintenance.manage", "maintenance.release", "rentals.view", "rentals.inspect",
-            "rentals.return",
+            "rentals.return", "logistics.view",
         ],
     },
 }

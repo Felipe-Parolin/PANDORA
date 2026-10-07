@@ -7,6 +7,7 @@ import PeopleView from '../views/PeopleView.vue'
 import EquipmentView from '../views/EquipmentView.vue'
 import MaintenanceView from '../views/MaintenanceView.vue'
 import RentalsView from '../views/RentalsView.vue'
+import LogisticsView from '../views/LogisticsView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -19,6 +20,7 @@ const router = createRouter({
         { path: 'equipamentos', name: 'equipment', component: EquipmentView, meta: { permission: 'assets.view' } },
         { path: 'manutencao', name: 'maintenance', component: MaintenanceView, meta: { permission: 'maintenance.view' } },
         { path: 'locacoes', name: 'rentals', component: RentalsView, meta: { permission: 'rentals.view' } },
+        { path: 'transporte', name: 'logistics', component: LogisticsView, meta: { permission: 'logistics.view' } },
       ],
     },
   ],
@@ -30,7 +32,7 @@ router.beforeEach((to) => {
   if (to.meta.permission && !can(to.meta.permission)) {
     const fallback = [
       ['dashboard.view', '/'], ['accounts.users.view', '/pessoas'], ['assets.view', '/equipamentos'],
-      ['maintenance.view', '/manutencao'], ['rentals.view', '/locacoes'],
+      ['maintenance.view', '/manutencao'], ['rentals.view', '/locacoes'], ['logistics.view', '/transporte'],
     ].find(([permission]) => can(permission))
     if (!fallback) { logout(); return '/login' }
     return fallback[1]

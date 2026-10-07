@@ -80,6 +80,10 @@ Exemplo de criação:
   "end_date": "2026-09-22",
   "status": "DRAFT",
   "discount": "0.00",
+  "delivery_transport_required": true,
+  "return_transport_required": false,
+  "delivery_address": "Rua Exemplo, 10, Leme/SP",
+  "transport_fee": "60.00",
   "conditions": "Retirada e devolução no balcão.",
   "items": [
     {
@@ -96,3 +100,16 @@ O fluxo usa os estados `DRAFT`, `SENT`, `APPROVED`, `ACTIVE`, `RETURNED`, `COMPL
 Ao reservar, entregar ou prorrogar, a API verifica sobreposição, situação operacional, OS aberta e manutenção crítica vencida dentro de transação atômica. A OS pré-locação vinculada à própria reserva é exceção na disponibilidade, mas outras OS abertas continuam bloqueando. A equipe de Manutenção registra o checklist por `PATCH rental-inspections/{id}/`; aprovação conclui e libera a OS automaticamente, e impedimento mantém o equipamento bloqueado. Uma OS pré-locação de reserva ativa não pode ser concluída ou excluída manualmente. Se a reserva for cancelada após um impedimento, a OS permanece aberta para reparo e exige testes finais e liberação técnica. A entrega exige inspeção aprovada e OS liberada para todos os equipamentos. Na devolução, o equipamento permanece em `INSPECTION`; itens avariados ou críticos geram automaticamente uma OS pós-locação.
 
 As evidências podem ser enviadas por `media/` usando `rental_inspection=<id>`, categoria `INSPECTION` e upload multipart.
+
+## Transporte opcional
+
+| Método | Endpoint | Uso |
+|---|---|---|
+| CRUD | `vehicles/` | veículos, placa, capacidade, disponibilidade e observações |
+| `GET/PATCH` | `transport-tasks/` | consulta e planejamento de viagens de entrega/coleta |
+| `POST` | `transport-tasks/{id}/start/` | saída com veículo e motorista atribuídos, após liberação técnica no caso de entrega |
+| `POST` | `transport-tasks/{id}/complete/` | conclui viagem e libera próxima etapa da locação |
+
+Somente reservas com `delivery_transport_required` geram viagem de entrega. A viagem de coleta é criada ao registrar a entrega quando `return_transport_required` está ativo. O orçamento expõe as viagens em `transport_tasks` e inclui `transport_fee` no `total`. A exclusão de veículos ou orçamentos com viagens vinculadas é impedida para preservar o histórico. As permissões são `logistics.view` e `logistics.manage`.
+
+Sem transporte contratado, a entrega e devolução seguem diretamente o fluxo habitual. O status da viagem é `PLANNED`, `IN_TRANSIT`, `COMPLETED` ou `CANCELLED`.
