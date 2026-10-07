@@ -22,6 +22,12 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 - cálculo automático de diárias, preço negociado por item, desconto e total;
 - bloqueio de sobreposição quando o orçamento vira reserva aprovada;
 - bloqueio por OS aberta ou manutenção crítica vencida;
+- reserva com responsável, condições e cancelamento auditável;
+- checklist pré-locação por categoria, fotos, observações e impedimento crítico;
+- entrega vinculada à inspeção, prorrogação com nova consulta de disponibilidade e histórico;
+- devolução com comparação pré/pós-locação e equipamento bloqueado até a inspeção final;
+- encaminhamento automático de avarias da devolução para ordem de serviço;
+- planos de manutenção controlados por data, periodicidade e horas de uso;
 - dashboard, listas em cartões e modais responsivos para desktop e celular;
 - dados demonstrativos e testes automatizados.
 
@@ -106,6 +112,8 @@ pnpm build
 ```
 
 Consulte [Arquitetura](docs/ARCHITECTURE.md) e [Contrato inicial da API](docs/API.md) para decisões de domínio, regras e endpoints.
+
+Os fluxos de locação implementam os cards [#37](https://github.com/Felipe-Parolin/PANDORA/issues/37), [#38](https://github.com/Felipe-Parolin/PANDORA/issues/38), [#39](https://github.com/Felipe-Parolin/PANDORA/issues/39), [#40](https://github.com/Felipe-Parolin/PANDORA/issues/40) e [#41](https://github.com/Felipe-Parolin/PANDORA/issues/41).
 
 ## Equipe
 

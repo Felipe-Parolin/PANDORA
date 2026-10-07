@@ -29,7 +29,11 @@ const orderForm = reactive({
   diagnosis: '', technician: '', status: 'OPEN', scheduled_at: '', final_tests: '',
   released: false, labor_hours: 0, parts_used: '', abandoned_reason: '',
 })
-const planForm = reactive({ equipment: '', name: '', maintenance_type: 'PREVENTIVE', interval_days: 90, usage_limit: null, next_due_date: '', criticality: 'MEDIUM', checklist: [], active: true })
+const planForm = reactive({
+  equipment: '', name: '', maintenance_type: 'PREVENTIVE', interval_days: 90, usage_limit: null,
+  next_due_date: '', last_service_date: '', last_service_usage_hours: null, advance_notice_days: 15,
+  advance_notice_usage_hours: 10, criticality: 'MEDIUM', checklist: [], active: true,
+})
 
 const alerts = computed(() => plans.value.filter(item => ['OVERDUE', 'CRITICAL', 'UPCOMING'].includes(item.alert_status)))
 const terminalStatuses = ['COMPLETED', 'CANCELLED']
@@ -103,10 +107,13 @@ function openPlan(item = null) {
   Object.assign(planForm, item ? {
     equipment: item.equipment, name: item.name, maintenance_type: item.maintenance_type,
     interval_days: item.interval_days, usage_limit: item.usage_limit, next_due_date: item.next_due_date || '',
+    last_service_date: item.last_service_date || '', last_service_usage_hours: item.last_service_usage_hours,
+    advance_notice_days: item.advance_notice_days, advance_notice_usage_hours: item.advance_notice_usage_hours,
     criticality: item.criticality, checklist: item.checklist, active: item.active,
   } : {
     equipment: equipment.value[0]?.id || '', name: '', maintenance_type: 'PREVENTIVE', interval_days: 90,
-    usage_limit: null, next_due_date: '', criticality: 'MEDIUM', checklist: [], active: true,
+    usage_limit: null, next_due_date: '', last_service_date: '', last_service_usage_hours: null,
+    advance_notice_days: 15, advance_notice_usage_hours: 10, criticality: 'MEDIUM', checklist: [], active: true,
   })
 }
 
@@ -131,7 +138,14 @@ const saveOrder = () => persist('/service-orders/', {
   scheduled_at: orderForm.scheduled_at || null,
   abandoned_reason: orderForm.status === 'ABANDONED' ? orderForm.abandoned_reason : '',
 })
-const savePlan = () => persist('/maintenance-plans/', planForm)
+const savePlan = () => persist('/maintenance-plans/', {
+  ...planForm,
+  interval_days: planForm.interval_days || null,
+  usage_limit: planForm.usage_limit || null,
+  next_due_date: planForm.next_due_date || null,
+  last_service_date: planForm.last_service_date || null,
+  last_service_usage_hours: planForm.last_service_usage_hours === '' ? null : planForm.last_service_usage_hours,
+})
 function requestDelete(kind, item) { deleting.value = { kind, item } }
 async function remove() {
   busy.value = true
@@ -191,7 +205,10 @@ onMounted(load)
       </section>
     </template>
 
-    <section v-else class="panel list-panel"><div class="table-wrap"><table><thead><tr><th>Plano</th><th>Equipamento</th><th>Modalidade</th><th>Próxima data</th><th>Criticidade</th><th>Alerta</th><th class="right">Ações</th></tr></thead><tbody><tr v-for="plan in plans" :key="plan.id"><td><strong>{{ plan.name }}</strong></td><td>{{ plan.equipment_name }}</td><td>{{ plan.maintenance_type_label }}</td><td>{{ shortDate(plan.next_due_date) }}</td><td>{{ plan.criticality_label }}</td><td><StatusBadge :value="plan.alert_status" :label="({ OK: 'Em dia', UPCOMING: 'Próxima', OVERDUE: 'Vencida', CRITICAL: 'Crítica' })[plan.alert_status]" /></td><td class="right"><div class="row-actions"><button class="icon-btn table-action" title="Mídias do equipamento" @click="mediaEquipment = equipmentById(plan.equipment)"><Files :size="17" /></button><button v-if="can('maintenance.manage')" class="icon-btn table-action" title="Editar plano" @click="openPlan(plan)"><Pencil :size="17" /></button><button v-if="can('maintenance.manage')" class="icon-btn danger-icon" title="Excluir plano" @click="requestDelete('plan', plan)"><Trash2 :size="17" /></button></div></td></tr></tbody></table></div></section>
+    <section v-else class="panel list-panel">
+      <div class="table-wrap desktop-list"><table><thead><tr><th>Plano</th><th>Equipamento</th><th>Modalidade</th><th>Próxima execução</th><th>Gatilho por uso</th><th>Criticidade</th><th>Alerta</th><th class="right">Ações</th></tr></thead><tbody><tr v-for="plan in plans" :key="plan.id"><td><strong>{{ plan.name }}</strong><small v-if="!plan.active">Plano inativo</small></td><td>{{ plan.equipment_name }}</td><td>{{ plan.maintenance_type_label }}</td><td><strong>{{ plan.due_date ? shortDate(plan.due_date) : 'Sem data' }}</strong><small v-if="plan.interval_days">a cada {{ plan.interval_days }} dias</small></td><td><strong>{{ plan.due_usage_hours !== null ? `${plan.due_usage_hours} h` : 'Não configurado' }}</strong><small v-if="plan.usage_remaining !== null">{{ plan.usage_remaining >= 0 ? `${plan.usage_remaining} h restantes` : `${Math.abs(plan.usage_remaining)} h excedidas` }}</small></td><td>{{ plan.criticality_label }}</td><td><StatusBadge :value="plan.alert_status" :label="({ OK: 'Em dia', UPCOMING: 'Próxima', OVERDUE: 'Vencida', CRITICAL: 'Crítica' })[plan.alert_status]" /></td><td class="right"><div class="row-actions"><button class="icon-btn table-action" title="Mídias do equipamento" @click="mediaEquipment = equipmentById(plan.equipment)"><Files :size="17" /></button><button v-if="can('maintenance.manage')" class="icon-btn table-action" title="Editar plano" @click="openPlan(plan)"><Pencil :size="17" /></button><button v-if="can('maintenance.manage')" class="icon-btn danger-icon" title="Excluir plano" @click="requestDelete('plan', plan)"><Trash2 :size="17" /></button></div></td></tr><tr v-if="!plans.length"><td colspan="8" class="empty-cell">Nenhum plano de manutenção cadastrado.</td></tr></tbody></table></div>
+      <div class="mobile-card-list"><article v-for="plan in plans" :key="plan.id" class="mobile-record-card"><header><div><span class="eyebrow">{{ plan.maintenance_type_label }} · {{ plan.criticality_label }}</span><strong>{{ plan.name }}</strong><small>{{ plan.equipment_name }}</small></div><StatusBadge :value="plan.alert_status" :label="({ OK: 'Em dia', UPCOMING: 'Próxima', OVERDUE: 'Vencida', CRITICAL: 'Crítica' })[plan.alert_status]" /></header><dl><div><dt>Próxima data</dt><dd>{{ plan.due_date ? shortDate(plan.due_date) : 'Não configurada' }}</dd></div><div><dt>Próximo uso</dt><dd>{{ plan.due_usage_hours !== null ? `${plan.due_usage_hours} h` : 'Não configurado' }}</dd></div><div><dt>Margem de uso</dt><dd>{{ plan.usage_remaining !== null ? `${plan.usage_remaining} h` : '—' }}</dd></div></dl><footer><button class="btn secondary" @click="mediaEquipment = equipmentById(plan.equipment)"><Files :size="15" />Mídias</button><button v-if="can('maintenance.manage')" class="btn secondary" @click="openPlan(plan)"><Pencil :size="15" />Editar plano</button></footer></article><div v-if="!plans.length" class="empty-state compact"><CalendarDays :size="26" /><h2>Nenhum plano cadastrado</h2></div></div>
+    </section>
 
     <ModalDialog v-if="modal === 'order'" :title="editing ? `Editar ${editing.number}` : 'Abrir chamado de manutenção'" wide @close="modal = null">
       <form @submit.prevent="saveOrder"><div class="form-grid three">
@@ -207,7 +224,14 @@ onMounted(load)
       </div><div v-if="error" class="error-message">{{ error }}</div><div class="modal-actions"><button type="button" class="btn secondary" @click="modal = null">Cancelar</button><span class="spacer" /><button class="btn primary" :disabled="busy">{{ busy ? 'Salvando...' : 'Salvar chamado' }}</button></div></form>
     </ModalDialog>
 
-    <ModalDialog v-if="modal === 'plan'" :title="editing ? 'Editar plano de manutenção' : 'Cadastrar plano de manutenção'" @close="modal = null"><form @submit.prevent="savePlan"><div class="form-grid"><div class="form-field span-2"><label>Nome do plano</label><input v-model="planForm.name" required /></div><div class="form-field span-2"><label>Equipamento</label><select v-model="planForm.equipment" required><option v-for="item in equipment" :key="item.id" :value="item.id">{{ item.internal_code }} · {{ item.name }}</option></select></div><div class="form-field"><label>Modalidade</label><select v-model="planForm.maintenance_type"><option value="PREVENTIVE">Preventiva</option><option value="SCHEDULED">Agendada</option><option value="PRE_RENTAL">Antes da locação</option><option value="POST_RENTAL">Pós-locação</option></select></div><div class="form-field"><label>Criticidade</label><select v-model="planForm.criticality"><option value="LOW">Baixa</option><option value="MEDIUM">Média</option><option value="HIGH">Alta</option><option value="CRITICAL">Crítica</option></select></div><div class="form-field"><label>Periodicidade (dias)</label><input v-model="planForm.interval_days" type="number" min="1" /></div><div class="form-field"><label>Próxima execução</label><input v-model="planForm.next_due_date" type="date" /></div><label class="check-line span-2"><input v-model="planForm.active" type="checkbox" />Plano ativo</label></div><div v-if="error" class="error-message">{{ error }}</div><div class="modal-actions"><button type="button" class="btn secondary" @click="modal = null">Cancelar</button><span class="spacer" /><button class="btn primary" :disabled="busy">Salvar plano</button></div></form></ModalDialog>
+    <ModalDialog v-if="modal === 'plan'" :title="editing ? 'Editar plano de manutenção' : 'Cadastrar plano de manutenção'" wide @close="modal = null"><form @submit.prevent="savePlan"><div class="form-grid three">
+      <div class="form-field span-2"><label>Nome do plano</label><input v-model="planForm.name" required /></div><div class="form-field"><label>Criticidade</label><select v-model="planForm.criticality"><option value="LOW">Baixa</option><option value="MEDIUM">Média</option><option value="HIGH">Alta</option><option value="CRITICAL">Crítica</option></select></div>
+      <div class="form-field span-2"><label>Equipamento</label><select v-model="planForm.equipment" required><option v-for="item in equipment" :key="item.id" :value="item.id">{{ item.internal_code }} · {{ item.name }} · {{ item.current_usage_hours }} h</option></select></div><div class="form-field"><label>Modalidade</label><select v-model="planForm.maintenance_type"><option value="PREVENTIVE">Preventiva</option><option value="SCHEDULED">Agendada</option><option value="PRE_RENTAL">Antes da locação</option><option value="POST_RENTAL">Pós-locação</option></select></div>
+      <div class="form-field"><label>Periodicidade (dias)</label><input v-model="planForm.interval_days" type="number" min="1" placeholder="Ex.: 90" /></div><div class="form-field"><label>Última manutenção</label><input v-model="planForm.last_service_date" type="date" /></div><div class="form-field"><label>Próxima execução</label><input v-model="planForm.next_due_date" type="date" /></div>
+      <div class="form-field"><label>Periodicidade por uso (h)</label><input v-model="planForm.usage_limit" type="number" min="1" placeholder="Ex.: 250" /></div><div class="form-field"><label>Horas na última manutenção</label><input v-model="planForm.last_service_usage_hours" type="number" min="0" /></div><div class="form-field"><label>Alertar antes (horas)</label><input v-model="planForm.advance_notice_usage_hours" type="number" min="0" /></div>
+      <div class="form-field"><label>Alertar antes (dias)</label><input v-model="planForm.advance_notice_days" type="number" min="0" /></div><div class="plan-help span-2"><AlertTriangle :size="18" /><span>Planos críticos vencidos por data ou horas bloqueiam novas reservas e a entrega do equipamento.</span></div>
+      <label class="check-line span-3"><input v-model="planForm.active" type="checkbox" />Plano ativo e participando dos alertas</label>
+    </div><div v-if="error" class="error-message">{{ error }}</div><div class="modal-actions"><button type="button" class="btn secondary" @click="modal = null">Cancelar</button><span class="spacer" /><button class="btn primary" :disabled="busy">{{ busy ? 'Salvando...' : 'Salvar plano' }}</button></div></form></ModalDialog>
 
     <EquipmentMediaModal v-if="mediaEquipment" :equipment="mediaEquipment" @close="mediaEquipment = null" @changed="load" />
     <ConfirmDialog v-if="deleting" :title="deleting.kind === 'order' ? 'Excluir chamado' : 'Excluir plano'" :message="`Excluir “${deleting.item.number || deleting.item.name}”? Esta ação não pode ser desfeita.`" :busy="busy" @cancel="deleting = null" @confirm="remove" />

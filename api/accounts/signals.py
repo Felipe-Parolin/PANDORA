@@ -20,4 +20,8 @@ def ensure_default_groups(sender, **kwargs):
                     "is_system": True,
                 },
             )
+            if group.is_system:
+                group.description = defaults["description"]
+                group.permissions = defaults["permissions"]
+                group.save(update_fields=("description", "permissions", "updated_at"))
             User.objects.filter(role=role, access_group__isnull=True).update(access_group=group)

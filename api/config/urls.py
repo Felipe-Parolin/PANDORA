@@ -10,7 +10,7 @@ from assets.views import CategoryViewSet, EquipmentViewSet, MediaAssetViewSet
 from core.views import DashboardView, HealthView
 from customers.views import CustomerViewSet
 from maintenance.views import MaintenancePlanViewSet, ServiceOrderViewSet
-from rentals.views import RentalQuoteViewSet
+from rentals.views import RentalInspectionViewSet, RentalQuoteViewSet
 
 router = DefaultRouter()
 router.register("users", UserViewSet, basename="user")
@@ -22,6 +22,7 @@ router.register("media", MediaAssetViewSet, basename="media")
 router.register("maintenance-plans", MaintenancePlanViewSet, basename="maintenance-plan")
 router.register("service-orders", ServiceOrderViewSet, basename="service-order")
 router.register("rental-quotes", RentalQuoteViewSet, basename="rental-quote")
+router.register("rental-inspections", RentalInspectionViewSet, basename="rental-inspection")
 
 urlpatterns = [
     path("admin/", admin.site.urls),

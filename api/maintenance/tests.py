@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError
 
 from accounts.models import User
 from assets.models import Equipment, EquipmentCategory
-from maintenance.models import ServiceOrder
+from maintenance.models import MaintenancePlan, ServiceOrder
 from maintenance.patterns import (
     CorrectiveMaintenanceFactory,
     MaintenanceKitFactory,
@@ -14,6 +14,7 @@ from maintenance.patterns import (
     ServiceOrderOpeningDirector,
     TextReportProcessorCreator,
 )
+from maintenance.services import maintenance_alert_status
 
 
 class PatternTests(TestCase):
@@ -78,3 +79,27 @@ class PatternTests(TestCase):
             status=ServiceOrder.Status.IN_PROGRESS,
         )
         self.assertIsNotNone(order.started_at)
+
+
+class MaintenanceAlertTests(TestCase):
+    def test_critical_usage_limit_triggers_alert(self):
+        category = EquipmentCategory.objects.create(name="Horas", default_daily_rate=100)
+        equipment = Equipment.objects.create(
+            category=category,
+            name="Equipamento por uso",
+            brand="Marca",
+            model="M1",
+            serial_number="USAGE-1",
+            internal_code="USE-1",
+            daily_rate=100,
+            current_usage_hours=120,
+        )
+        plan = MaintenancePlan.objects.create(
+            equipment=equipment,
+            name="Revisão 100 horas",
+            maintenance_type=MaintenancePlan.Type.PREVENTIVE,
+            usage_limit=100,
+            last_service_usage_hours=0,
+            criticality=MaintenancePlan.Criticality.CRITICAL,
+        )
+        self.assertEqual(maintenance_alert_status(plan), "CRITICAL")

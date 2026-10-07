@@ -31,6 +31,10 @@ class Command(BaseCommand):
                     "is_system": True,
                 },
             )
+            if group.is_system:
+                group.description = DEFAULT_GROUPS[role]["description"]
+                group.permissions = DEFAULT_GROUPS[role]["permissions"]
+                group.save(update_fields=("description", "permissions", "updated_at"))
             user, _ = User.objects.get_or_create(email=email, defaults={"full_name": name, "role": role, "is_staff": role == User.Role.ADMIN})
             user.full_name, user.role, user.is_active = name, role, True
             user.access_group = group

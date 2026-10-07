@@ -15,6 +15,10 @@ PERMISSION_CATALOG = [
     {"code": "rentals.view", "label": "Consultar orçamentos e locações", "module": "Locações"},
     {"code": "rentals.manage", "label": "Cadastrar, editar e excluir orçamentos", "module": "Locações"},
     {"code": "rentals.approve", "label": "Aprovar orçamento e reservar equipamento", "module": "Locações"},
+    {"code": "rentals.inspect", "label": "Realizar inspeções de locação", "module": "Locações"},
+    {"code": "rentals.dispatch", "label": "Registrar entrega de equipamentos", "module": "Locações"},
+    {"code": "rentals.extend", "label": "Prorrogar locações", "module": "Locações"},
+    {"code": "rentals.return", "label": "Registrar e concluir devoluções", "module": "Locações"},
 ]
 
 VALID_PERMISSIONS = {item["code"] for item in PERMISSION_CATALOG}
@@ -31,6 +35,7 @@ DEFAULT_GROUPS = {
         "permissions": [
             "dashboard.view", "accounts.users.view", "customers.view", "customers.manage",
             "assets.view", "media.view", "media.manage", "rentals.view", "rentals.manage",
+            "rentals.approve", "rentals.inspect", "rentals.dispatch", "rentals.extend", "rentals.return",
         ],
     },
     "MAINTENANCE": {
@@ -38,7 +43,8 @@ DEFAULT_GROUPS = {
         "description": "Equipamentos, mídias, planos, ordens e liberação técnica.",
         "permissions": [
             "dashboard.view", "accounts.users.view", "assets.view", "media.view", "media.manage",
-            "maintenance.view", "maintenance.manage", "maintenance.release",
+            "maintenance.view", "maintenance.manage", "maintenance.release", "rentals.view", "rentals.inspect",
+            "rentals.return",
         ],
     },
 }

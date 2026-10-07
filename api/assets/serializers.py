@@ -34,7 +34,7 @@ class MediaAssetSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(obj.file.url) if request and obj.file else None
 
     def validate(self, attrs):
-        links = [attrs.get(name, getattr(self.instance, name, None)) for name in ("equipment", "service_order", "rental_quote")]
+        links = [attrs.get(name, getattr(self.instance, name, None)) for name in ("equipment", "service_order", "rental_quote", "rental_inspection")]
         if sum(bool(item) for item in links) != 1:
-            raise serializers.ValidationError("Vincule a mídia a exatamente um equipamento, ordem de serviço ou orçamento.")
+            raise serializers.ValidationError("Vincule a mídia a exatamente um equipamento, ordem, locação ou inspeção.")
         return attrs

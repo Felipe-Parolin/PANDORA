@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Files, Pencil, Plus, QrCode, Search, SlidersHorizontal, Trash2 } from 'lucide-vue-next'
+import { ClipboardList, Files, Pencil, Plus, QrCode, Search, SlidersHorizontal, Trash2 } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import EquipmentMediaModal from '../components/EquipmentMediaModal.vue'
 import ModalDialog from '../components/ModalDialog.vue'
@@ -9,8 +9,9 @@ import StatusBadge from '../components/StatusBadge.vue'
 import { api, apiError, can, money, rows } from '../services/api'
 
 const route = useRoute(), router = useRouter()
-const equipment = ref([]), categories = ref([]), search = ref(''), status = ref(''), modal = ref(false), editing = ref(null), deleting = ref(null), mediaEquipment = ref(null), qrEquipment = ref(null), qrUrl = ref(''), scanNotice = ref(''), error = ref(''), busy = ref(false)
+const equipment = ref([]), categories = ref([]), search = ref(''), status = ref(''), modal = ref(false), categoryModal = ref(false), editing = ref(null), deleting = ref(null), mediaEquipment = ref(null), qrEquipment = ref(null), qrUrl = ref(''), scanNotice = ref(''), error = ref(''), busy = ref(false)
 const form = reactive({ category: '', name: '', brand: '', model: '', serial_number: '', internal_code: '', status: 'AVAILABLE', daily_rate: '', technical_details: '', current_usage_hours: 0 })
+const categoryForm = reactive({ id: '', pre_rental_text: '', return_text: '' })
 const filtered = computed(() => equipment.value.filter(x => (!status.value || x.status === status.value) && `${x.name} ${x.internal_code} ${x.serial_number}`.toLowerCase().includes(search.value.toLowerCase())))
 
 async function load() {
@@ -20,6 +21,31 @@ async function load() {
 function open(item = null) {
   editing.value = item; error.value = ''; modal.value = true
   Object.assign(form, item ? { category: item.category, name: item.name, brand: item.brand, model: item.model, serial_number: item.serial_number, internal_code: item.internal_code, status: item.status, daily_rate: item.daily_rate, technical_details: item.technical_details, current_usage_hours: item.current_usage_hours } : { category: categories.value[0]?.id || '', name: '', brand: '', model: '', serial_number: '', internal_code: '', status: 'AVAILABLE', daily_rate: '', technical_details: '', current_usage_hours: 0 })
+}
+function selectCategory(id) {
+  const category = categories.value.find(item => item.id === Number(id)) || categories.value[0]
+  if (!category) return
+  categoryForm.id = category.id
+  categoryForm.pre_rental_text = (category.pre_rental_checklist || []).map(item => typeof item === 'string' ? item : item.label).join('\n')
+  categoryForm.return_text = (category.return_checklist || []).map(item => typeof item === 'string' ? item : item.label).join('\n')
+}
+function openCategorySettings() {
+  error.value = ''
+  categoryModal.value = true
+  selectCategory(categoryForm.id || categories.value[0]?.id)
+}
+async function saveCategorySettings() {
+  busy.value = true; error.value = ''
+  const lines = value => value.split('\n').map(item => item.trim()).filter(Boolean)
+  try {
+    await api.patch(`/categories/${categoryForm.id}/`, {
+      pre_rental_checklist: lines(categoryForm.pre_rental_text),
+      return_checklist: lines(categoryForm.return_text),
+    })
+    categoryModal.value = false
+    await load()
+  } catch (event) { error.value = apiError(event) }
+  finally { busy.value = false }
 }
 async function save() {
   busy.value = true; error.value = ''
@@ -54,11 +80,13 @@ onBeforeUnmount(() => { if (qrUrl.value) URL.revokeObjectURL(qrUrl.value) })
 </script>
 
 <template>
-  <div class="page"><header class="page-heading compact"><div><span class="eyebrow">PATRIMÔNIO LOCÁVEL</span><h1>Equipamentos</h1><p>Cadastro, QR Code, documentos e histórico técnico no mesmo contexto.</p></div><button v-if="can('assets.manage')" class="btn primary" @click="open()"><Plus :size="18" />Novo equipamento</button></header>
-    <div v-if="scanNotice" class="success-strip">{{ scanNotice }}</div><div v-if="error && !modal && !qrEquipment" class="floating-error">{{ error }}</div>
+  <div class="page"><header class="page-heading compact"><div><span class="eyebrow">PATRIMÔNIO LOCÁVEL</span><h1>Equipamentos</h1><p>Cadastro, QR Code, documentos e histórico técnico no mesmo contexto.</p></div><div v-if="can('assets.manage')" class="page-heading-actions"><button class="btn secondary" @click="openCategorySettings"><ClipboardList :size="18" />Checklists por categoria</button><button class="btn primary" @click="open()"><Plus :size="18" />Novo equipamento</button></div></header>
+    <div v-if="scanNotice" class="success-strip">{{ scanNotice }}</div><div v-if="error && !modal && !categoryModal && !qrEquipment" class="floating-error">{{ error }}</div>
     <section class="panel list-panel"><header class="list-toolbar"><div class="search-box"><Search :size="17" /><input v-model="search" placeholder="Buscar equipamento, código ou série" /></div><div class="filter-select"><SlidersHorizontal :size="16" /><select v-model="status"><option value="">Todos os status</option><option value="AVAILABLE">Disponível</option><option value="RESERVED">Reservado</option><option value="RENTED">Locado</option><option value="MAINTENANCE">Em manutenção</option><option value="INSPECTION">Em inspeção</option><option value="INACTIVE">Inativo</option></select></div></header><div class="table-wrap"><table><thead><tr><th>Equipamento</th><th>Categoria</th><th>Identificação</th><th>Diária</th><th>Status</th><th>Mídias</th><th class="right">Ações</th></tr></thead><tbody><tr v-for="item in filtered" :key="item.id"><td><strong>{{ item.name }}</strong><small>{{ item.brand }} · {{ item.model }}</small></td><td>{{ item.category_name }}</td><td><strong>{{ item.internal_code }}</strong><small>Série {{ item.serial_number }}</small></td><td><strong>{{ money(item.daily_rate) }}</strong></td><td><StatusBadge :value="item.status" :label="item.status_label" /></td><td><button class="media-count" @click="mediaEquipment = item"><Files :size="15" />{{ item.media_count }} arquivo(s)</button></td><td class="right"><div class="row-actions"><button class="icon-btn table-action" title="Abrir QR Code" @click="openQr(item)"><QrCode :size="17" /></button><button class="icon-btn table-action" title="Documentos e mídias" @click="mediaEquipment = item"><Files :size="17" /></button><button v-if="can('assets.manage')" class="icon-btn table-action" title="Editar" @click="open(item)"><Pencil :size="17" /></button><button v-if="can('assets.manage')" class="icon-btn danger-icon" title="Excluir" @click="deleting = item"><Trash2 :size="17" /></button></div></td></tr></tbody></table></div></section>
 
     <ModalDialog v-if="modal" :title="editing ? 'Editar equipamento' : 'Cadastrar equipamento'" wide @close="modal = false"><form @submit.prevent="save"><div class="form-grid three"><div class="form-field"><label>Categoria</label><select v-model="form.category" required><option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option></select></div><div class="form-field"><label>Código interno</label><input v-model="form.internal_code" placeholder="EQ-001" required /></div><div class="form-field"><label>Status</label><select v-model="form.status"><option value="AVAILABLE">Disponível</option><option value="RESERVED">Reservado</option><option value="RENTED">Locado</option><option value="MAINTENANCE">Em manutenção</option><option value="INSPECTION">Em inspeção</option><option value="INACTIVE">Inativo</option></select></div><div class="form-field span-2"><label>Nome do equipamento</label><input v-model="form.name" required /></div><div class="form-field"><label>Valor da diária</label><input v-model="form.daily_rate" type="number" min="0" step="0.01" required /></div><div class="form-field"><label>Marca</label><input v-model="form.brand" required /></div><div class="form-field"><label>Modelo</label><input v-model="form.model" required /></div><div class="form-field"><label>Número de série</label><input v-model="form.serial_number" required /></div><div class="form-field"><label>Horas de uso</label><input v-model="form.current_usage_hours" type="number" min="0" /></div><div class="form-field span-2"><label>Características técnicas</label><textarea v-model="form.technical_details" rows="3" /></div></div><div v-if="error" class="error-message">{{ error }}</div><div class="modal-actions"><button type="button" class="btn secondary" @click="modal = false">Cancelar</button><span class="spacer" /><button class="btn primary" :disabled="busy">{{ editing ? 'Salvar alterações' : 'Salvar equipamento' }}</button></div></form></ModalDialog>
+
+    <ModalDialog v-if="categoryModal" title="Checklists de inspeção por categoria" wide @close="categoryModal = false"><form @submit.prevent="saveCategorySettings"><div class="form-grid"><div class="form-field span-2"><label>Categoria</label><select v-model="categoryForm.id" required @change="selectCategory(categoryForm.id)"><option v-for="item in categories" :key="item.id" :value="item.id">{{ item.name }}</option></select></div><div class="form-field"><label>Checklist pré-locação</label><textarea v-model="categoryForm.pre_rental_text" rows="10" placeholder="Um item por linha. Se ficar vazio, o sistema usa o modelo padrão." /></div><div class="form-field"><label>Checklist de devolução</label><textarea v-model="categoryForm.return_text" rows="10" placeholder="Um item por linha. Se ficar vazio, o sistema usa o modelo padrão." /></div></div><div class="plan-help"><ClipboardList :size="18" /><span>Cada linha vira uma verificação obrigatória na inspeção dos equipamentos desta categoria.</span></div><div v-if="error" class="error-message">{{ error }}</div><div class="modal-actions"><button type="button" class="btn secondary" @click="categoryModal = false">Cancelar</button><span class="spacer" /><button class="btn primary" :disabled="busy">{{ busy ? 'Salvando...' : 'Salvar checklists' }}</button></div></form></ModalDialog>
 
     <ModalDialog v-if="qrEquipment" title="QR Code do equipamento" @close="qrEquipment = null"><div class="qr-dialog"><div class="qr-image"><img v-if="qrUrl" :src="qrUrl" :alt="`QR Code ${qrEquipment.internal_code}`" /><span v-else>Gerando QR Code...</span></div><span class="eyebrow">IDENTIFICAÇÃO ÚNICA</span><h2>{{ qrEquipment.internal_code }} · {{ qrEquipment.name }}</h2><p>Ao escanear, um usuário autenticado abre diretamente este equipamento no PANDORA.</p><code>{{ qrEquipment.qr_code_token }}</code><a v-if="qrUrl" class="btn primary" :href="qrUrl" :download="`qr-${qrEquipment.internal_code}.png`">Baixar QR Code</a></div><div v-if="error" class="error-message">{{ error }}</div></ModalDialog>
     <EquipmentMediaModal v-if="mediaEquipment" :equipment="mediaEquipment" @close="mediaEquipment = null" @changed="load" />

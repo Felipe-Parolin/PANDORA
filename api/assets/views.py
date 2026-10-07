@@ -72,7 +72,7 @@ class EquipmentViewSet(ModelViewSet):
 
 
 class MediaAssetViewSet(ModelViewSet):
-    queryset = MediaAsset.objects.select_related("equipment", "service_order", "rental_quote", "uploaded_by")
+    queryset = MediaAsset.objects.select_related("equipment", "service_order", "rental_quote", "rental_inspection", "uploaded_by")
     serializer_class = MediaAssetSerializer
     permission_classes = [ACLPermission]
     acl_view = "media.view"
@@ -83,7 +83,7 @@ class MediaAssetViewSet(ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        for param, field in (("category", "category"), ("equipment", "equipment_id"), ("service_order", "service_order_id"), ("rental_quote", "rental_quote_id")):
+        for param, field in (("category", "category"), ("equipment", "equipment_id"), ("service_order", "service_order_id"), ("rental_quote", "rental_quote_id"), ("rental_inspection", "rental_inspection_id")):
             value = self.request.query_params.get(param)
             if value:
                 queryset = queryset.filter(**{field: value})

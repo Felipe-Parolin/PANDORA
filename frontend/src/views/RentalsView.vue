@@ -2,10 +2,12 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   AlertCircle, CalendarRange, Check, CheckCircle2, ChevronRight, CirclePlus,
-  Clock3, Pencil, Plus, Search, Send, Trash2,
+  ClipboardCheck, Clock3, PackageCheck, Pencil, Plus, RotateCcw, Search, Trash2,
+  Truck, XCircle,
 } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import ModalDialog from '../components/ModalDialog.vue'
+import RentalInspectionModal from '../components/RentalInspectionModal.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import { api, apiError, can, money, rows, shortDate } from '../services/api'
 
@@ -24,23 +26,39 @@ const availableEquipment = ref([])
 const blockedEquipment = ref([])
 const availabilityLoading = ref(false)
 const availabilityChecked = ref(false)
+const inspectionContext = ref(null)
+const operation = ref(null)
+const operationQuote = ref(null)
+const notice = ref('')
+const operationForm = reactive({ date: '', conditions: '', new_end_date: '', reason: '' })
 
 const form = reactive({ customer: '', start_date: '', end_date: '', status: 'DRAFT', conditions: '', discount: 0, notes: '', items: [] })
 const days = computed(() => form.start_date && form.end_date ? Math.max(Math.round((new Date(`${form.end_date}T12:00:00`) - new Date(`${form.start_date}T12:00:00`)) / 86400000) + 1, 1) : 1)
 const periodValid = computed(() => form.customer && form.start_date && form.end_date && form.end_date >= form.start_date)
 const subtotal = computed(() => form.items.reduce((sum, item) => sum + Number(item.daily_rate) * days.value, 0))
 const total = computed(() => Math.max(subtotal.value - Number(form.discount || 0), 0))
-const activeQuotes = computed(() => quotes.value.filter(item => !['CANCELLED', 'EXPIRED'].includes(item.status)))
+const activeQuotes = computed(() => quotes.value.filter(item => ['DRAFT', 'SENT', 'APPROVED', 'ACTIVE', 'RETURNED'].includes(item.status)))
+const tabMatches = (quote, key) => ({
+  ALL: true,
+  PROPOSAL: ['DRAFT', 'SENT'].includes(quote.status),
+  APPROVED: quote.status === 'APPROVED',
+  ACTIVE: quote.status === 'ACTIVE',
+  RETURNED: quote.status === 'RETURNED',
+  COMPLETED: quote.status === 'COMPLETED',
+  CLOSED: ['CANCELLED', 'EXPIRED'].includes(quote.status),
+}[key])
 const statusTabs = computed(() => [
   { key: 'ALL', label: 'Todos' },
-  { key: 'DRAFT', label: 'Rascunhos' },
-  { key: 'SENT', label: 'Enviados' },
-  { key: 'APPROVED', label: 'Aprovados' },
-  { key: 'CLOSED', label: 'Cancelados / expirados' },
-].map(item => ({ ...item, count: quotes.value.filter(quote => item.key === 'ALL' || (item.key === 'CLOSED' ? ['CANCELLED', 'EXPIRED'].includes(quote.status) : quote.status === item.key)).length })))
+  { key: 'PROPOSAL', label: 'Propostas' },
+  { key: 'APPROVED', label: 'Reservadas' },
+  { key: 'ACTIVE', label: 'Em locação' },
+  { key: 'RETURNED', label: 'Em inspeção' },
+  { key: 'COMPLETED', label: 'Concluídas' },
+  { key: 'CLOSED', label: 'Canceladas' },
+].map(item => ({ ...item, count: quotes.value.filter(quote => tabMatches(quote, item.key)).length })))
 const filteredQuotes = computed(() => {
   const term = quoteSearch.value.trim().toLocaleLowerCase('pt-BR')
-  return quotes.value.filter(quote => statusFilter.value === 'ALL' || (statusFilter.value === 'CLOSED' ? ['CANCELLED', 'EXPIRED'].includes(quote.status) : quote.status === statusFilter.value)).filter(quote => !term || [quote.number, quote.customer_name].some(value => String(value || '').toLocaleLowerCase('pt-BR').includes(term)))
+  return quotes.value.filter(quote => tabMatches(quote, statusFilter.value)).filter(quote => !term || [quote.number, quote.customer_name].some(value => String(value || '').toLocaleLowerCase('pt-BR').includes(term)))
 })
 const visibleAvailable = computed(() => {
   const term = equipmentSearch.value.trim().toLocaleLowerCase('pt-BR')
@@ -55,6 +73,75 @@ async function load() {
   const [quoteResponse, customerResponse] = await Promise.all([api.get('/rental-quotes/'), api.get('/customers/')])
   quotes.value = rows(quoteResponse.data)
   customers.value = rows(customerResponse.data)
+}
+
+const inspectionProgress = (quote, type) => {
+  const items = quote.inspections?.filter(item => item.inspection_type === type) || []
+  return { done: items.filter(item => item.result !== 'PENDING').length, total: quote.items.length }
+}
+
+function localDateTime() {
+  const date = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+  return date.toISOString().slice(0, 16)
+}
+
+function openOperation(kind, quote) {
+  operation.value = kind
+  operationQuote.value = quote
+  error.value = ''
+  Object.assign(operationForm, {
+    date: localDateTime(),
+    conditions: '',
+    new_end_date: quote.end_date,
+    reason: '',
+  })
+}
+
+async function reserve(quote) {
+  busy.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    await api.post(`/rental-quotes/${quote.id}/reserve/`)
+    notice.value = `${quote.number} reservada. A inspeção pré-locação já pode ser realizada.`
+    await load()
+  } catch (event) { error.value = apiError(event) }
+  finally { busy.value = false }
+}
+
+async function submitOperation() {
+  const quote = operationQuote.value
+  const kind = operation.value
+  busy.value = true
+  error.value = ''
+  notice.value = ''
+  const config = {
+    deliver: { url: 'deliver', payload: { delivered_at: operationForm.date, conditions: operationForm.conditions }, message: 'Entrega registrada e equipamentos marcados como locados.' },
+    extend: { url: 'extend', payload: { new_end_date: operationForm.new_end_date, conditions: operationForm.conditions }, message: 'Prorrogação registrada após nova validação de disponibilidade.' },
+    return: { url: 'return', payload: { returned_at: operationForm.date, conditions: operationForm.conditions }, message: 'Devolução registrada. Equipamentos bloqueados até a inspeção final.' },
+    cancel: { url: 'cancel', payload: { reason: operationForm.reason }, message: 'Locação cancelada e equipamentos liberados.' },
+  }[kind]
+  try {
+    await api.post(`/rental-quotes/${quote.id}/${config.url}/`, config.payload)
+    operation.value = null
+    operationQuote.value = null
+    notice.value = config.message
+    await load()
+  } catch (event) { error.value = apiError(event) }
+  finally { busy.value = false }
+}
+
+async function finalizeReturn(quote) {
+  busy.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const { data } = await api.post(`/rental-quotes/${quote.id}/finalize-return/`)
+    const routed = data.routed_to_maintenance || []
+    notice.value = routed.length ? `Devolução concluída. ${routed.join(', ')} encaminhado(s) para manutenção.` : 'Devolução concluída e equipamentos liberados.'
+    await load()
+  } catch (event) { error.value = apiError(event) }
+  finally { busy.value = false }
 }
 
 function open(item = null) {
@@ -154,20 +241,49 @@ onMounted(load)
 <template>
   <div class="page">
     <header class="page-heading compact"><div><span class="eyebrow">COMERCIAL</span><h1>Locações e orçamentos</h1><p>Disponibilidade antecipada, composição de preço e acompanhamento do funil.</p></div><button v-if="can('rentals.manage')" class="btn primary" @click="open()"><Plus :size="18" />Gerar orçamento</button></header>
-    <div v-if="error && !modal" class="floating-error">{{ error }}</div>
+    <div v-if="notice" class="success-strip">{{ notice }}</div>
+    <div v-if="error && !modal && !operation && !inspectionContext" class="floating-error">{{ error }}</div>
 
     <section class="quote-summary">
       <div><span class="eyebrow">EM NEGOCIAÇÃO</span><strong>{{ activeQuotes.length }}</strong><p>propostas no funil comercial</p></div>
       <div><span class="eyebrow">VALOR DO FUNIL</span><strong>{{ money(activeQuotes.reduce((sum, quote) => sum + Number(quote.total), 0)) }}</strong><p>sem cancelados e expirados</p></div>
-      <div><span class="eyebrow">CONVERSÃO</span><strong>{{ quotes.length ? Math.round(quotes.filter(quote => quote.status === 'APPROVED').length / quotes.length * 100) : 0 }}%</strong><p>orçamentos aprovados</p></div>
+      <div><span class="eyebrow">CONVERSÃO</span><strong>{{ quotes.length ? Math.round(quotes.filter(quote => ['APPROVED', 'ACTIVE', 'RETURNED', 'COMPLETED'].includes(quote.status)).length / quotes.length * 100) : 0 }}%</strong><p>orçamentos convertidos em reserva</p></div>
     </section>
 
     <div class="workflow-tabs quote-tabs" role="tablist" aria-label="Filtrar orçamentos por status"><button v-for="item in statusTabs" :key="item.key" :class="{ active: statusFilter === item.key }" @click="statusFilter = item.key"><span>{{ item.label }}</span><b>{{ item.count }}</b></button></div>
 
     <section class="panel list-panel">
       <header class="list-toolbar"><div class="search-box"><Search :size="17" /><input v-model="quoteSearch" placeholder="Buscar por número ou cliente" /></div><span class="result-count">{{ filteredQuotes.length }} orçamento(s)</span></header>
-      <div class="table-wrap desktop-list"><table><thead><tr><th>Orçamento</th><th>Cliente</th><th>Período</th><th>Itens</th><th>Status</th><th class="right">Total</th><th class="right">Ações</th></tr></thead><tbody><tr v-for="quote in filteredQuotes" :key="quote.id"><td><strong>{{ quote.number }}</strong><small>{{ shortDate(quote.created_at?.slice(0, 10)) }}</small></td><td>{{ quote.customer_name }}</td><td>{{ shortDate(quote.start_date) }} → {{ shortDate(quote.end_date) }}</td><td>{{ quote.items.length }} equipamento(s)</td><td><StatusBadge :value="quote.status" :label="quote.status_label" /></td><td class="right"><strong>{{ money(quote.total) }}</strong></td><td class="right"><div v-if="can('rentals.manage')" class="row-actions"><button class="icon-btn table-action" title="Editar orçamento" @click="open(quote)"><Pencil :size="17" /></button><button class="icon-btn danger-icon" title="Excluir orçamento" @click="deleting = quote"><Trash2 :size="17" /></button></div></td></tr><tr v-if="!filteredQuotes.length"><td colspan="7" class="empty-cell">Nenhum orçamento nesta etapa.</td></tr></tbody></table></div>
-      <div class="mobile-card-list"><article v-for="quote in filteredQuotes" :key="quote.id" class="mobile-record-card"><header><div><span class="eyebrow">{{ quote.number }}</span><strong>{{ quote.customer_name }}</strong></div><StatusBadge :value="quote.status" :label="quote.status_label" /></header><dl><div><dt>Período</dt><dd>{{ shortDate(quote.start_date) }} → {{ shortDate(quote.end_date) }}</dd></div><div><dt>Equipamentos</dt><dd>{{ quote.items.length }}</dd></div><div><dt>Total</dt><dd><strong>{{ money(quote.total) }}</strong></dd></div></dl><footer v-if="can('rentals.manage')"><button class="btn secondary" @click="open(quote)"><Pencil :size="16" />Editar orçamento</button></footer></article></div>
+      <div class="table-wrap desktop-list"><table><thead><tr><th>Orçamento</th><th>Cliente</th><th>Período</th><th>Itens</th><th>Status</th><th class="right">Total</th><th class="right">Ações</th></tr></thead><tbody>
+        <tr v-for="quote in filteredQuotes" :key="quote.id">
+          <td><strong>{{ quote.number }}</strong><small>{{ shortDate(quote.created_at?.slice(0, 10)) }} · {{ quote.created_by_name }}</small></td>
+          <td>{{ quote.customer_name }}</td><td>{{ shortDate(quote.start_date) }} → {{ shortDate(quote.end_date) }}</td><td>{{ quote.items.length }} equipamento(s)</td>
+          <td><StatusBadge :value="quote.status" :label="quote.status_label" /><small v-if="quote.status === 'APPROVED'">Pré-inspeção {{ inspectionProgress(quote, 'PRE_RENTAL').done }}/{{ inspectionProgress(quote, 'PRE_RENTAL').total }}</small><small v-if="quote.status === 'RETURNED'">Inspeção final {{ inspectionProgress(quote, 'RETURN').done }}/{{ inspectionProgress(quote, 'RETURN').total }}</small></td>
+          <td class="right"><strong>{{ money(quote.total) }}</strong></td>
+          <td class="right"><div class="row-actions rental-row-actions">
+            <button v-if="can('rentals.manage') && ['DRAFT', 'SENT'].includes(quote.status)" class="icon-btn table-action" title="Editar orçamento" @click="open(quote)"><Pencil :size="17" /></button>
+            <button v-if="can('rentals.approve') && ['DRAFT', 'SENT'].includes(quote.status)" class="icon-btn success-action" title="Aprovar e reservar" :disabled="busy" @click="reserve(quote)"><PackageCheck :size="17" /></button>
+            <button v-if="['APPROVED'].includes(quote.status)" class="icon-btn table-action" title="Inspeção pré-locação" @click="inspectionContext = { quote, type: 'PRE_RENTAL' }"><ClipboardCheck :size="17" /></button>
+            <button v-if="can('rentals.dispatch') && quote.status === 'APPROVED'" class="icon-btn success-action" title="Registrar entrega" @click="openOperation('deliver', quote)"><Truck :size="17" /></button>
+            <button v-if="can('rentals.extend') && ['APPROVED', 'ACTIVE'].includes(quote.status)" class="icon-btn table-action" title="Prorrogar locação" @click="openOperation('extend', quote)"><CalendarRange :size="17" /></button>
+            <button v-if="can('rentals.return') && quote.status === 'ACTIVE'" class="icon-btn table-action" title="Registrar devolução" @click="openOperation('return', quote)"><RotateCcw :size="17" /></button>
+            <button v-if="['RETURNED', 'COMPLETED'].includes(quote.status)" class="icon-btn table-action" title="Inspeção final" @click="inspectionContext = { quote, type: 'RETURN' }"><ClipboardCheck :size="17" /></button>
+            <button v-if="can('rentals.return') && quote.status === 'RETURNED'" class="icon-btn success-action" title="Concluir devolução" :disabled="inspectionProgress(quote, 'RETURN').done !== inspectionProgress(quote, 'RETURN').total" @click="finalizeReturn(quote)"><CheckCircle2 :size="17" /></button>
+            <button v-if="can('rentals.manage') && ['DRAFT', 'SENT', 'APPROVED'].includes(quote.status)" class="icon-btn danger-icon" title="Cancelar" @click="openOperation('cancel', quote)"><XCircle :size="17" /></button>
+            <button v-if="can('rentals.manage') && ['DRAFT', 'SENT', 'CANCELLED', 'EXPIRED'].includes(quote.status)" class="icon-btn danger-icon" title="Excluir" @click="deleting = quote"><Trash2 :size="17" /></button>
+          </div></td>
+        </tr><tr v-if="!filteredQuotes.length"><td colspan="7" class="empty-cell">Nenhuma locação nesta etapa.</td></tr>
+      </tbody></table></div>
+      <div class="mobile-card-list"><article v-for="quote in filteredQuotes" :key="quote.id" class="mobile-record-card rental-mobile-card"><header><div><span class="eyebrow">{{ quote.number }}</span><strong>{{ quote.customer_name }}</strong></div><StatusBadge :value="quote.status" :label="quote.status_label" /></header><dl><div><dt>Período</dt><dd>{{ shortDate(quote.start_date) }} → {{ shortDate(quote.end_date) }}</dd></div><div><dt>Equipamentos</dt><dd>{{ quote.items.length }}</dd></div><div><dt>Total</dt><dd><strong>{{ money(quote.total) }}</strong></dd></div></dl><footer>
+        <button v-if="can('rentals.manage') && ['DRAFT', 'SENT'].includes(quote.status)" class="btn secondary" @click="open(quote)"><Pencil :size="15" />Editar</button>
+        <button v-if="can('rentals.approve') && ['DRAFT', 'SENT'].includes(quote.status)" class="btn primary" @click="reserve(quote)"><PackageCheck :size="15" />Reservar</button>
+        <button v-if="quote.status === 'APPROVED'" class="btn secondary" @click="inspectionContext = { quote, type: 'PRE_RENTAL' }"><ClipboardCheck :size="15" />Inspecionar</button>
+        <button v-if="can('rentals.dispatch') && quote.status === 'APPROVED'" class="btn primary" @click="openOperation('deliver', quote)"><Truck :size="15" />Entregar</button>
+        <button v-if="can('rentals.extend') && ['APPROVED', 'ACTIVE'].includes(quote.status)" class="btn secondary" @click="openOperation('extend', quote)"><CalendarRange :size="15" />Prorrogar</button>
+        <button v-if="can('rentals.return') && quote.status === 'ACTIVE'" class="btn primary" @click="openOperation('return', quote)"><RotateCcw :size="15" />Devolver</button>
+        <button v-if="['RETURNED', 'COMPLETED'].includes(quote.status)" class="btn secondary" @click="inspectionContext = { quote, type: 'RETURN' }"><ClipboardCheck :size="15" />Inspeção final</button>
+        <button v-if="can('rentals.return') && quote.status === 'RETURNED'" class="btn primary" :disabled="inspectionProgress(quote, 'RETURN').done !== inspectionProgress(quote, 'RETURN').total" @click="finalizeReturn(quote)"><CheckCircle2 :size="15" />Concluir</button>
+      </footer></article></div>
     </section>
 
     <ModalDialog v-if="modal" :title="editing ? `Editar ${editing.number}` : 'Novo orçamento de locação'" wide @close="modal = false">
@@ -176,7 +292,7 @@ onMounted(load)
         <div v-if="step === 1" class="form-grid">
           <div class="form-field span-2"><label>Cliente</label><select v-model="form.customer" required><option v-for="customer in customers" :key="customer.id" :value="customer.id">{{ customer.name }} · {{ customer.document }}</option></select></div>
           <div class="form-field"><label>Início</label><input v-model="form.start_date" type="date" required /></div><div class="form-field"><label>Fim previsto</label><input v-model="form.end_date" type="date" :min="form.start_date" required /></div>
-          <div class="form-field span-2"><label>Etapa comercial</label><select v-model="form.status"><option value="DRAFT">Rascunho</option><option value="SENT">Enviado ao cliente</option><option v-if="can('rentals.approve')" value="APPROVED">Aprovado / reservar equipamentos</option><option value="CANCELLED">Cancelado</option><option value="EXPIRED">Expirado</option></select></div>
+          <div class="form-field span-2"><label>Etapa comercial</label><select v-model="form.status"><option value="DRAFT">Rascunho</option><option value="SENT">Enviado ao cliente</option></select></div>
           <div class="period-callout span-2"><CalendarRange :size="20" /><div><strong>{{ days }} diária(s)</strong><span>A próxima etapa valida conflitos de locação e bloqueios de manutenção.</span></div></div>
         </div>
 
@@ -199,6 +315,16 @@ onMounted(load)
         <div class="modal-actions"><button v-if="step > 1" type="button" class="btn secondary" @click="step--">Voltar</button><button v-else type="button" class="btn secondary" @click="modal = false">Cancelar</button><span class="spacer" /><button v-if="step < 3" type="button" class="btn primary" :disabled="busy || availabilityLoading || (step === 1 && !periodValid) || (step === 2 && !form.items.length)" @click="nextStep">{{ availabilityLoading ? 'Validando...' : 'Continuar' }} <ChevronRight :size="17" /></button><button v-else class="btn primary" :disabled="busy || !form.items.length"><CirclePlus :size="17" />{{ busy ? 'Salvando...' : (editing ? 'Salvar alterações' : 'Salvar orçamento') }}</button></div>
       </form>
     </ModalDialog>
+    <ModalDialog v-if="operation && operationQuote" :title="({ deliver: 'Registrar entrega', extend: 'Prorrogar locação', return: 'Registrar devolução', cancel: 'Cancelar locação' })[operation]" @close="operation = null">
+      <form @submit.prevent="submitOperation"><div class="form-grid">
+        <div class="operation-context span-2"><span class="eyebrow">{{ operationQuote.number }}</span><strong>{{ operationQuote.customer_name }}</strong><small>{{ shortDate(operationQuote.start_date) }} → {{ shortDate(operationQuote.end_date) }} · {{ operationQuote.items.length }} equipamento(s)</small></div>
+        <div v-if="['deliver', 'return'].includes(operation)" class="form-field span-2"><label>{{ operation === 'deliver' ? 'Data e hora da entrega' : 'Data e hora da devolução' }}</label><input v-model="operationForm.date" type="datetime-local" required /></div>
+        <div v-if="operation === 'extend'" class="form-field span-2"><label>Nova data de término</label><input v-model="operationForm.new_end_date" type="date" :min="operationQuote.end_date" required /></div>
+        <div v-if="operation !== 'cancel'" class="form-field span-2"><label>Condições e observações</label><textarea v-model="operationForm.conditions" rows="4" :placeholder="operation === 'deliver' ? 'Responsável pela retirada, acessórios e condições da entrega.' : (operation === 'return' ? 'Estado informado no recebimento; a inspeção detalhada vem na próxima etapa.' : 'Condições comerciais da prorrogação.')" /></div>
+        <div v-else class="form-field span-2"><label>Motivo do cancelamento</label><textarea v-model="operationForm.reason" rows="4" required placeholder="Registre por que a reserva foi cancelada." /></div>
+      </div><div v-if="error" class="error-message">{{ error }}</div><div class="modal-actions"><button type="button" class="btn secondary" @click="operation = null">Voltar</button><span class="spacer" /><button class="btn" :class="operation === 'cancel' ? 'danger' : 'primary'" :disabled="busy">{{ busy ? 'Processando...' : 'Confirmar' }}</button></div></form>
+    </ModalDialog>
+    <RentalInspectionModal v-if="inspectionContext" :quote="inspectionContext.quote" :type="inspectionContext.type" @close="inspectionContext = null" @changed="load" />
     <ConfirmDialog v-if="deleting" title="Excluir orçamento" :message="`Excluir “${deleting.number}”? A operação pode ser impedida se houver vínculos posteriores.`" :busy="busy" @cancel="deleting = null" @confirm="remove" />
   </div>
 </template>
