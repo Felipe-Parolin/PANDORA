@@ -28,6 +28,7 @@ const mediaEquipment = ref(null)
 const inspectionContext = ref(null)
 const error = ref('')
 const busy = ref(false)
+const quickPlanning = ref(false)
 
 const orderForm = reactive({
   equipment: '', maintenance_type: 'CORRECTIVE', priority: 'NORMAL', symptoms: '',
@@ -104,8 +105,9 @@ async function load() {
 
 function openOrder(item = null, defaults = {}) {
   editing.value = item
-  modal.value = !can('maintenance.manage') && item ? 'order-detail' : item?.rental_inspection && item.maintenance_type === 'PRE_RENTAL' ? 'linked-order' : 'order'
+  modal.value = !item ? 'quick-order' : !can('maintenance.manage') ? 'order-detail' : item.rental_inspection && item.maintenance_type === 'PRE_RENTAL' ? 'linked-order' : 'order'
   error.value = ''
+  quickPlanning.value = Boolean(defaults.scheduled_at)
   Object.assign(orderForm, item ? {
     equipment: item.equipment,
     maintenance_type: item.maintenance_type,
@@ -121,7 +123,7 @@ function openOrder(item = null, defaults = {}) {
     parts_used: item.parts_used,
     abandoned_reason: item.abandoned_reason || '',
   } : {
-    equipment: equipment.value[0]?.id || '', maintenance_type: 'CORRECTIVE', priority: 'NORMAL',
+    equipment: '', maintenance_type: 'CORRECTIVE', priority: 'NORMAL',
     symptoms: '', diagnosis: '', technician: '', status: 'OPEN', scheduled_at: '', final_tests: '',
     released: false, labor_hours: 0, parts_used: '', abandoned_reason: '', ...defaults,
   })
@@ -201,6 +203,15 @@ const saveOrder = () => {
   }
   return persist('/service-orders/', payload)
 }
+const saveQuickOrder = () => persist('/service-orders/', {
+  equipment: orderForm.equipment,
+  maintenance_type: orderForm.maintenance_type,
+  symptoms: orderForm.symptoms.trim(),
+  priority: orderForm.priority,
+  technician: orderForm.technician || null,
+  scheduled_at: orderForm.scheduled_at || null,
+  status: orderForm.scheduled_at ? 'SCHEDULED' : 'OPEN',
+})
 const saveLinkedOrder = () => persist('/service-orders/', {
   status: orderForm.status,
   priority: orderForm.priority,
@@ -303,7 +314,18 @@ onMounted(async () => {
       </form>
     </ModalDialog>
 
-    <ModalDialog v-if="modal === 'order'" :title="editing ? `Editar ${editing.number}` : 'Abrir chamado de manutenção'" wide @close="modal = null">
+    <ModalDialog v-if="modal === 'quick-order'" title="Abrir chamado" @close="modal = null">
+      <form class="quick-order-form" @submit.prevent="saveQuickOrder">
+        <p class="quick-order-lead">Registre a solicitação agora. Diagnóstico, peças e testes ficam para o atendimento.</p>
+        <div class="form-field"><label for="quick-equipment">Equipamento</label><select id="quick-equipment" v-model="orderForm.equipment" required><option value="" disabled>Selecione o equipamento</option><option v-for="item in equipment" :key="item.id" :value="item.id">{{ item.internal_code }} · {{ item.name }}</option></select></div>
+        <div class="form-field"><label for="quick-symptoms">O que precisa ser feito?</label><textarea id="quick-symptoms" v-model="orderForm.symptoms" rows="3" required placeholder="Ex.: Betoneira não liga; verificar motor e cabo." /></div>
+        <div class="form-field"><label for="quick-type">Tipo de chamado</label><select id="quick-type" v-model="orderForm.maintenance_type"><option value="CORRECTIVE">Corretiva · falha ou reparo</option><option value="PREVENTIVE">Preventiva · revisão programada</option></select></div>
+        <details class="quick-order-options" :open="quickPlanning" @toggle="quickPlanning = $event.target.open"><summary>{{ orderForm.scheduled_at ? `Agendado para ${orderForm.scheduled_at.replace('T', ' · ')}` : 'Planejar agora (opcional)' }}</summary><div class="form-grid"><div class="form-field"><label for="quick-priority">Prioridade</label><select id="quick-priority" v-model="orderForm.priority"><option value="NORMAL">Normal</option><option value="ALTA">Alta</option><option value="CRÍTICA">Crítica</option></select></div><div class="form-field"><label for="quick-technician">Técnico</label><select id="quick-technician" v-model="orderForm.technician"><option value="">Definir depois</option><option v-for="user in technicians" :key="user.id" :value="user.id">{{ user.full_name }}</option></select></div><div class="form-field span-2"><label for="quick-schedule">Data e hora</label><input id="quick-schedule" v-model="orderForm.scheduled_at" type="datetime-local" :required="quickPlanning && orderForm.status === 'SCHEDULED'" /><small>Sem data, o chamado entra na fila como aberto.</small></div></div></details>
+        <div v-if="error" class="error-message">{{ error }}</div><div class="modal-actions"><button type="button" class="btn secondary" @click="modal = null">Cancelar</button><span class="spacer" /><button class="btn primary" :disabled="busy || !equipment.length">{{ busy ? 'Abrindo...' : 'Abrir chamado' }}</button></div>
+      </form>
+    </ModalDialog>
+
+    <ModalDialog v-if="modal === 'order'" :title="`Editar ${editing.number}`" wide @close="modal = null">
       <form class="service-order-form" @submit.prevent="saveOrder">
         <div class="order-form-intro"><Wrench :size="22" /><div><strong>{{ editing ? 'Registro técnico' : 'Novo atendimento' }}</strong><span>{{ editing?.maintenance_type === 'POST_RENTAL' ? 'Reparo pós-locação vinculado à inspeção de devolução.' : 'Organize o chamado e registre o que precisa ser verificado no equipamento.' }}</span></div></div>
         <section class="order-form-section"><header><span>01</span><div><h3>Identificação</h3><p>Equipamento e motivo da intervenção</p></div></header><div class="form-grid">

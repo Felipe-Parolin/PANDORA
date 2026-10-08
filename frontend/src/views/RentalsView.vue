@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
-  AlertCircle, CalendarRange, Check, CheckCircle2, ChevronRight, CirclePlus,
+  AlertCircle, CalendarRange, Check, CheckCircle2,
   ClipboardCheck, Clock3, PackageCheck, Pencil, Plus, RotateCcw, Search, Trash2,
   Truck, XCircle, Route,
 } from 'lucide-vue-next'
@@ -17,7 +17,6 @@ const modal = ref(false)
 const editing = ref(null)
 const deleting = ref(null)
 const error = ref('')
-const step = ref(1)
 const busy = ref(false)
 const statusFilter = ref('ALL')
 const quoteSearch = ref('')
@@ -26,6 +25,7 @@ const availableEquipment = ref([])
 const blockedEquipment = ref([])
 const availabilityLoading = ref(false)
 const availabilityChecked = ref(false)
+let availabilityRequest = 0
 const inspectionContext = ref(null)
 const operation = ref(null)
 const operationQuote = ref(null)
@@ -35,9 +35,14 @@ const operationForm = reactive({ date: '', conditions: '', new_end_date: '', rea
 
 const form = reactive({ customer: '', start_date: '', end_date: '', status: 'DRAFT', conditions: '', discount: 0, notes: '', items: [], delivery_transport_required: false, return_transport_required: false, delivery_address: '', return_address: '', transport_fee: 0 })
 const days = computed(() => form.start_date && form.end_date ? Math.max(Math.round((new Date(`${form.end_date}T12:00:00`) - new Date(`${form.start_date}T12:00:00`)) / 86400000) + 1, 1) : 1)
-const periodValid = computed(() => form.customer && form.start_date && form.end_date && form.end_date >= form.start_date && (!form.delivery_transport_required || form.delivery_address.trim()) && (!form.return_transport_required || form.return_address.trim()))
+const datesValid = computed(() => form.start_date && form.end_date && form.end_date >= form.start_date)
+const selectedConflicts = computed(() => form.items.filter(line => blockedEquipment.value.some(item => item.equipment.id === line.equipment_id)))
 const subtotal = computed(() => form.items.reduce((sum, item) => sum + Number(item.daily_rate) * days.value, 0))
 const total = computed(() => Math.max(subtotal.value + Number(form.transport_fee || 0) - Number(form.discount || 0), 0))
+const readyToSave = computed(() => Boolean(form.customer && datesValid.value && availabilityChecked.value && !availabilityLoading.value && form.items.length && !selectedConflicts.value.length &&
+  (!form.delivery_transport_required || form.delivery_address.trim()) && (!form.return_transport_required || form.return_address.trim()) &&
+  form.items.every(item => item.daily_rate !== '' && Number(item.daily_rate) >= 0) &&
+  Number(form.transport_fee || 0) >= 0 && Number(form.discount || 0) >= 0 && Number(form.discount || 0) <= subtotal.value + Number(form.transport_fee || 0)))
 const activeQuotes = computed(() => quotes.value.filter(item => ['DRAFT', 'SENT', 'APPROVED', 'ACTIVE', 'RETURNED'].includes(item.status)))
 const tabMatches = (quote, key) => ({
   ALL: true,
@@ -162,8 +167,6 @@ async function finalizeReturn(quote) {
 function open(item = null) {
   editing.value = item
   error.value = ''
-  step.value = 1
-  modal.value = true
   availableEquipment.value = []
   blockedEquipment.value = []
   availabilityChecked.value = false
@@ -178,39 +181,43 @@ function open(item = null) {
     })
   } else {
     const today = new Date()
-    const later = new Date(Date.now() + 3 * 86400000)
+    const later = new Date(today)
+    later.setDate(later.getDate() + 3)
+    const localDay = date => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
     Object.assign(form, {
-      customer: customers.value[0]?.id || '', start_date: today.toISOString().slice(0, 10), end_date: later.toISOString().slice(0, 10), status: 'DRAFT',
-      conditions: 'Combustível por conta do cliente. Entrega e coleta conforme opções do orçamento.', discount: 0, notes: '', items: [],
+      customer: '', start_date: localDay(today), end_date: localDay(later), status: 'DRAFT',
+      conditions: 'Locação somente de equipamento. Entrega e devolução conforme acordado.', discount: 0, notes: '', items: [],
       delivery_transport_required: false, return_transport_required: false, delivery_address: '', return_address: '', transport_fee: 0,
     })
   }
+  modal.value = true
+  loadAvailability()
 }
 
 async function loadAvailability() {
-  if (!periodValid.value) return
+  const request = ++availabilityRequest
+  availabilityChecked.value = false
+  availableEquipment.value = []
+  blockedEquipment.value = []
+  if (!datesValid.value) {
+    availabilityLoading.value = false
+    return
+  }
   availabilityLoading.value = true
   error.value = ''
   try {
     const params = { start: form.start_date, end: form.end_date }
     if (editing.value) params.ignore_quote = editing.value.id
     const { data } = await api.get('/rental-quotes/availability/', { params })
+    if (request !== availabilityRequest || !modal.value) return
     availableEquipment.value = data.available.map(item => item.equipment)
     blockedEquipment.value = data.blocked
     availabilityChecked.value = true
   } catch (e) {
-    error.value = apiError(e)
+    if (request === availabilityRequest && modal.value) error.value = apiError(e)
   } finally {
-    availabilityLoading.value = false
+    if (request === availabilityRequest) availabilityLoading.value = false
   }
-}
-
-async function nextStep() {
-  if (step.value === 1) {
-    await loadAvailability()
-    if (!availabilityChecked.value) return
-  }
-  step.value += 1
 }
 
 function toggle(item) {
@@ -222,12 +229,14 @@ function toggle(item) {
 watch(() => [form.start_date, form.end_date], () => {
   availabilityChecked.value = false
   form.items.forEach(item => { item.quantity_days = days.value })
-})
+  if (modal.value) loadAvailability()
+}, { flush: 'sync' })
 watch(() => [form.delivery_transport_required, form.return_transport_required], ([delivery, returning]) => {
   if (!delivery && !returning) form.transport_fee = 0
 })
 
 async function save() {
+  if (!readyToSave.value) return
   busy.value = true
   error.value = ''
   const payload = { ...form, items: form.items.map(({ equipment_id, daily_rate, quantity_days }) => ({ equipment_id, daily_rate, quantity_days })) }
@@ -315,35 +324,23 @@ onMounted(load)
     </section>
 
     <ModalDialog v-if="modal" :title="editing ? `Editar ${editing.number}` : 'Novo orçamento de locação'" wide @close="modal = false">
-      <div class="stepper"><span :class="{ active: step >= 1, current: step === 1 }"><i>1</i><em>Cliente e período</em></span><ChevronRight :size="16" /><span :class="{ active: step >= 2, current: step === 2 }"><i>2</i><em>Disponibilidade</em></span><ChevronRight :size="16" /><span :class="{ active: step >= 3, current: step === 3 }"><i>3</i><em>Preço e resumo</em></span></div>
-      <form @submit.prevent="save">
-        <div v-if="step === 1" class="form-grid">
-          <div class="form-field span-2"><label>Cliente</label><select v-model="form.customer" required><option v-for="customer in customers" :key="customer.id" :value="customer.id">{{ customer.name }} · {{ customer.document }}</option></select></div>
-          <div class="form-field"><label>Início</label><input v-model="form.start_date" type="date" required /></div><div class="form-field"><label>Fim previsto</label><input v-model="form.end_date" type="date" :min="form.start_date" required /></div>
-          <div class="form-field span-2"><label>Etapa comercial</label><select v-model="form.status"><option value="DRAFT">Rascunho</option><option value="SENT">Enviado ao cliente</option></select></div>
-          <div class="form-field span-2"><label>Logística opcional</label><div class="transport-choices"><label><input v-model="form.delivery_transport_required" type="checkbox" /> Entrega com veículo</label><label><input v-model="form.return_transport_required" type="checkbox" /> Coleta de devolução</label></div><small>Sem transporte marcado, o cliente retira ou devolve no balcão.</small></div>
-          <div v-if="form.delivery_transport_required" class="form-field span-2"><label>Endereço da entrega</label><input v-model="form.delivery_address" required maxlength="255" placeholder="Rua, número, bairro, Leme/SP e referência" /></div>
-          <div v-if="form.return_transport_required" class="form-field span-2"><label>Endereço da coleta</label><input v-model="form.return_address" required maxlength="255" placeholder="Rua, número, bairro, Leme/SP e referência" /></div>
-          <div class="period-callout span-2"><CalendarRange :size="20" /><div><strong>{{ days }} diária(s)</strong><span>A próxima etapa valida conflitos de locação e bloqueios de manutenção.</span></div></div>
-        </div>
+      <form class="quote-editor" @submit.prevent="save">
+        <p class="quote-editor-lead">Escolha o cliente e o período. Os equipamentos disponíveis e o valor aparecem aqui mesmo.</p>
+        <div class="form-grid quote-editor-basics"><div class="form-field span-2"><label for="quote-customer">Cliente</label><select id="quote-customer" v-model="form.customer" required><option value="" disabled>Selecione o cliente</option><option v-for="customer in customers" :key="customer.id" :value="customer.id">{{ customer.name }} · {{ customer.document }}</option></select><small v-if="!customers.length">Cadastre um cliente antes de criar o orçamento.</small></div><div class="form-field"><label for="quote-start">Retirada</label><input id="quote-start" v-model="form.start_date" type="date" required /></div><div class="form-field"><label for="quote-end">Devolução prevista</label><input id="quote-end" v-model="form.end_date" type="date" :min="form.start_date" required /></div></div>
+        <div class="quote-period-hint"><CalendarRange :size="17" /><span v-if="datesValid">{{ days }} diária(s) · {{ shortDate(form.start_date) }} a {{ shortDate(form.end_date) }}</span><span v-else>Informe uma devolução igual ou posterior à retirada.</span></div>
 
-        <div v-if="step === 2" class="availability-step">
-          <div class="availability-toolbar"><div><span class="eyebrow">PERÍODO VALIDADO</span><strong>{{ shortDate(form.start_date) }} → {{ shortDate(form.end_date) }}</strong></div><div class="search-box"><Search :size="17" /><input v-model="equipmentSearch" placeholder="Buscar equipamento" /></div></div>
-          <div v-if="availabilityLoading" class="availability-loading"><Clock3 :size="22" />Consultando disponibilidade...</div>
-          <template v-else>
-            <div class="availability-result success"><CheckCircle2 :size="18" /><span><strong>{{ visibleAvailable.length }} disponíveis</strong> para selecionar no período</span></div>
-            <div class="equipment-picker"><button v-for="item in visibleAvailable" :key="item.id" type="button" :class="{ selected: form.items.some(line => line.equipment_id === item.id) }" @click="toggle(item)"><span class="select-check"><Check :size="15" /></span><div><strong>{{ item.name }}</strong><small>{{ item.internal_code }} · {{ item.category_name }}</small></div><b>{{ money(item.daily_rate) }}<small>/dia</small></b></button></div>
-            <details v-if="visibleBlocked.length" class="blocked-equipment"><summary><AlertCircle :size="17" />{{ visibleBlocked.length }} equipamento(s) indisponível(is)</summary><article v-for="item in visibleBlocked" :key="item.equipment.id"><div><strong>{{ item.equipment.internal_code }} · {{ item.equipment.name }}</strong><span>{{ item.reason }}</span></div><StatusBadge value="MAINTENANCE" label="Bloqueado" /></article></details>
-          </template>
-        </div>
+        <section class="quote-editor-section"><header><div><h3>Equipamentos</h3><p>Selecione um ou mais itens disponíveis nesse período.</p></div><div class="search-box"><Search :size="16" /><input v-model="equipmentSearch" placeholder="Buscar equipamento" aria-label="Buscar equipamento" :disabled="!datesValid" /></div></header>
+          <div v-if="!datesValid" class="quote-picker-placeholder">Informe as datas para consultar os equipamentos.</div>
+          <div v-else-if="availabilityLoading" class="quote-picker-placeholder"><Clock3 :size="18" />Consultando disponibilidade...</div>
+          <template v-else-if="availabilityChecked"><div class="quote-stock-count"><CheckCircle2 :size="16" />{{ availableEquipment.length }} disponível(is) no período</div><div v-if="visibleAvailable.length" class="equipment-picker quote-editor-picker"><button v-for="item in visibleAvailable" :key="item.id" type="button" :aria-pressed="form.items.some(line => line.equipment_id === item.id)" :class="{ selected: form.items.some(line => line.equipment_id === item.id) }" @click="toggle(item)"><span class="select-check"><Check :size="15" /></span><div><strong>{{ item.name }}</strong><small>{{ item.internal_code }} · {{ item.category_name }}</small></div><b>{{ money(item.daily_rate) }}<small>/dia</small></b></button></div><p v-else class="quote-picker-placeholder">Nenhum equipamento encontrado. Tente outra busca ou período.</p><details v-if="visibleBlocked.length" class="blocked-equipment"><summary><AlertCircle :size="17" />{{ visibleBlocked.length }} indisponível(is) neste período</summary><article v-for="item in visibleBlocked" :key="item.equipment.id"><div><strong>{{ item.equipment.internal_code }} · {{ item.equipment.name }}</strong><span>{{ item.reason }}</span></div></article></details></template>
+        </section>
 
-        <div v-if="step === 3" class="quote-builder">
-          <div class="quote-lines"><div v-for="item in form.items" :key="item.equipment_id" class="quote-line"><div><strong>{{ item.name }}</strong><span>{{ item.code }} · {{ days }} diária(s)</span></div><label class="rate-editor"><span>Diária</span><input v-model="item.daily_rate" type="number" min="0" step="0.01" /></label><strong>{{ money(Number(item.daily_rate) * days) }}</strong><button type="button" class="icon-btn" title="Remover equipamento" @click="toggle({ id: item.equipment_id })"><Trash2 :size="17" /></button></div><div class="form-field"><label>Condições comerciais</label><textarea v-model="form.conditions" rows="3" /></div><div class="form-field"><label>Observações internas</label><textarea v-model="form.notes" rows="3" placeholder="Informações que não fazem parte das condições enviadas ao cliente." /></div></div>
-          <aside class="quote-total"><span>Equipamentos <strong>{{ money(subtotal) }}</strong></span><label v-if="form.delivery_transport_required || form.return_transport_required">Transporte (total) <input v-model="form.transport_fee" type="number" min="0" step="0.01" /></label><label>Desconto <input v-model="form.discount" type="number" min="0" :max="subtotal + Number(form.transport_fee || 0)" step="0.01" /></label><div>Total <strong>{{ money(total) }}</strong></div><p>A aprovação reserva os equipamentos e abre os chamados técnicos. Viagens opcionais são planejadas depois.</p></aside>
-        </div>
+        <section class="quote-editor-section"><header><div><h3>Itens do orçamento</h3><p v-if="!form.items.length">Selecione um equipamento acima para começar.</p><p v-else>{{ form.items.length }} equipamento(s) · ajuste a diária se necessário.</p></div></header><div class="quote-lines"><div v-for="item in form.items" :key="item.equipment_id" class="quote-line"><div><strong>{{ item.name }}</strong><span>{{ item.code }} · {{ days }} diária(s)</span></div><label class="rate-editor"><span>Diária (R$)</span><input v-model="item.daily_rate" type="number" min="0" step="0.01" required /></label><strong>{{ money(Number(item.daily_rate) * days) }}</strong><button type="button" class="icon-btn" :aria-label="`Remover ${item.name}`" @click="toggle({ id: item.equipment_id })"><Trash2 :size="17" /></button></div></div><div v-if="selectedConflicts.length" class="quote-conflict"><AlertCircle :size="17" />{{ selectedConflicts.length }} item(ns) selecionado(s) ficaram indisponíveis após a troca de datas. Remova-os ou escolha outro período.</div></section>
 
-        <div v-if="error" class="error-message">{{ error }}</div>
-        <div class="modal-actions"><button v-if="step > 1" type="button" class="btn secondary" @click="step--">Voltar</button><button v-else type="button" class="btn secondary" @click="modal = false">Cancelar</button><span class="spacer" /><button v-if="step < 3" type="button" class="btn primary" :disabled="busy || availabilityLoading || (step === 1 && !periodValid) || (step === 2 && !form.items.length)" @click="nextStep">{{ availabilityLoading ? 'Validando...' : 'Continuar' }} <ChevronRight :size="17" /></button><button v-else class="btn primary" :disabled="busy || !form.items.length"><CirclePlus :size="17" />{{ busy ? 'Salvando...' : (editing ? 'Salvar alterações' : 'Salvar orçamento') }}</button></div>
+        <details class="quote-extra"><summary>Transporte e condições (opcional)</summary><div class="form-grid"><div class="form-field span-2"><label>Transporte</label><div class="transport-choices"><label><input v-model="form.delivery_transport_required" type="checkbox" /> Entrega com veículo</label><label><input v-model="form.return_transport_required" type="checkbox" /> Coleta na devolução</label></div><small>Se não marcar, a retirada e a devolução são no balcão.</small></div><div v-if="form.delivery_transport_required" class="form-field span-2"><label for="quote-delivery-address">Endereço de entrega</label><input id="quote-delivery-address" v-model="form.delivery_address" required maxlength="255" placeholder="Rua, número, bairro e cidade" /></div><div v-if="form.return_transport_required" class="form-field span-2"><label for="quote-return-address">Endereço da coleta</label><input id="quote-return-address" v-model="form.return_address" required maxlength="255" placeholder="Rua, número, bairro e cidade" /></div><div class="form-field span-2"><label for="quote-conditions">Condições comerciais</label><textarea id="quote-conditions" v-model="form.conditions" rows="2" /></div><div class="form-field span-2"><label for="quote-notes">Observações internas</label><textarea id="quote-notes" v-model="form.notes" rows="2" placeholder="Não aparecem nas condições enviadas ao cliente." /></div></div></details>
+
+        <div class="quote-editor-footer"><div class="quote-editor-values"><span>Equipamentos <strong>{{ money(subtotal) }}</strong></span><label v-if="form.delivery_transport_required || form.return_transport_required">Transporte (R$)<input v-model="form.transport_fee" type="number" min="0" step="0.01" /></label><label>Desconto (R$)<input v-model="form.discount" type="number" min="0" :max="subtotal + Number(form.transport_fee || 0)" step="0.01" /></label><div>Total estimado <strong>{{ money(total) }}</strong></div></div><div class="form-field quote-editor-status"><label for="quote-status">Etapa</label><select id="quote-status" v-model="form.status"><option value="DRAFT">Rascunho</option><option value="SENT">Enviado ao cliente</option></select><small>Salvar o orçamento não reserva estoque. A reserva ocorre somente na aprovação.</small></div></div>
+        <div v-if="error" class="error-message">{{ error }}</div><div class="modal-actions"><button type="button" class="btn secondary" @click="modal = false">Cancelar</button><span class="spacer" /><button class="btn primary" :disabled="busy || !readyToSave">{{ busy ? 'Salvando...' : (editing ? 'Salvar alterações' : 'Salvar orçamento') }}</button></div>
       </form>
     </ModalDialog>
     <ModalDialog v-if="flowQuote" :title="`Fluxo da locação · ${flowQuote.number}`" @close="flowQuote = null">

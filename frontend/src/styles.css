@@ -387,3 +387,39 @@ td small { margin-top: 4px; color: var(--muted); font-size: 10px; }
   .workflow-tabs { margin-right: -18px; padding-right: 18px; }.workflow-tabs button { min-height: 42px; }.desktop-list { display: none; }.mobile-card-list { display: grid; gap: 10px; padding: 12px; }.mobile-record-card { padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: white; }.mobile-record-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }.mobile-record-card > header strong { font-size: 13px; }.mobile-record-card dl { display: grid; grid-template-columns: repeat(2, 1fr); gap: 11px; margin: 16px 0; }.mobile-record-card dl div:first-child { grid-column: 1 / -1; }.mobile-record-card dt { color: var(--muted); font-size: 8px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }.mobile-record-card dd { margin: 3px 0 0; font-size: 10px; }.mobile-record-card footer { display: flex; gap: 7px; padding-top: 12px; border-top: 1px solid #eeeeee; }.mobile-record-card footer .btn { flex: 1; min-height: 39px; font-size: 11px; }.abandoned-callout { padding: 10px; border-radius: 7px; color: #8f4036; background: #fff0ee; font-size: 9px; line-height: 1.5; }.abandoned-callout strong { display: block; margin-bottom: 3px; }.quote-line { grid-template-columns: minmax(0, 1fr) auto; }.quote-line .rate-editor { grid-column: 1; }.quote-line > strong { grid-column: 2; grid-row: 1; }.quote-line > .icon-btn { grid-column: 2; grid-row: 2; justify-self: end; }.rate-editor input { width: 120px; font-size: 16px; }.blocked-equipment article { align-items: flex-start; }.context-banner { align-items: stretch; flex-direction: column; }.context-banner .btn { width: 100%; }
   .rental-mobile-card footer { flex-wrap: wrap; }.rental-mobile-card footer .btn { flex: 1 1 125px; }.inspection-progress { grid-template-columns: 1fr; gap: 9px; }.comparison-strip { grid-template-columns: 1fr; }.checklist-editor article { grid-template-columns: 1fr; }.checklist-editor select { width: 100%; font-size: 14px; }.inspection-equipment-list button { flex-basis: 165px; }.inspection-media > header { align-items: stretch; flex-direction: column; }.inspection-media > header .btn { width: 100%; }.inspection-media-list article { grid-template-columns: minmax(0, 1fr) auto auto; }
 }
+
+/* Short creation flows: record the essentials first, plan and price in context. */
+.quick-order-form { display: grid; gap: 17px; }
+.quick-order-lead, .quote-editor-lead { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.quick-order-options, .quote-extra { border: 1px solid var(--line); border-radius: 9px; background: #fafafa; }
+.quick-order-options summary, .quote-extra summary { padding: 14px 16px; color: var(--ink); font-size: 12px; font-weight: 800; cursor: pointer; }
+.quick-order-options[open] summary, .quote-extra[open] summary { border-bottom: 1px solid var(--line); }
+.quick-order-options .form-grid, .quote-extra .form-grid { padding: 16px; }
+.quick-order-options small, .quote-extra small, .quote-editor-status small, .quote-editor-basics small { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.quote-editor { display: grid; gap: 20px; }
+.quote-editor-basics { gap: 13px; }
+.quote-period-hint, .quote-stock-count { display: flex; align-items: center; gap: 8px; color: #266446; font-size: 11px; font-weight: 700; }
+.quote-period-hint { margin-top: -5px; padding: 10px 12px; border-radius: 8px; background: #eaf5ee; }
+.quote-editor-section { min-width: 0; padding-top: 18px; border-top: 1px solid var(--line); }
+.quote-editor-section > header { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 13px; }
+.quote-editor-section h3 { margin: 0; font-size: 15px; }
+.quote-editor-section p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+.quote-editor-section .search-box { flex: 0 1 275px; min-width: 160px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 8px; }
+.quote-stock-count { margin-bottom: 12px; }
+.quote-editor-picker { max-height: 260px; }
+.quote-picker-placeholder { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 90px; padding: 18px; border: 1px dashed var(--line); border-radius: 9px; text-align: center; color: var(--muted); font-size: 11px; }
+.quote-editor-section .blocked-equipment { margin-top: 12px; }
+.quote-conflict { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; padding: 11px; border-radius: 7px; color: #8f4036; background: #fff0ee; font-size: 11px; line-height: 1.45; }
+.quote-editor-footer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: end; padding: 16px; border: 1px solid #ead7a7; border-radius: 10px; background: #fff9ec; }
+.quote-editor-values { display: grid; gap: 9px; }
+.quote-editor-values > span, .quote-editor-values label, .quote-editor-values > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #49463f; font-size: 11px; }
+.quote-editor-values input { width: 115px; min-height: 36px; padding: 7px 9px; border: 1px solid #d7d7d7; border-radius: 7px; background: white; color: var(--ink); font-size: 12px; }
+.quote-editor-values > div { padding-top: 10px; border-top: 1px solid #ead7a7; font-weight: 800; }
+.quote-editor-values > div strong { font-size: 20px; color: #a65b00; }
+@media (max-width: 580px) {
+  .quote-editor-section > header { align-items: stretch; flex-direction: column; }
+  .quote-editor-section .search-box { flex: none; width: 100%; }
+  .quote-editor-footer { grid-template-columns: 1fr; }
+  .quote-editor-values input { font-size: 16px; }
+  .quick-order-options .form-grid, .quote-extra .form-grid { padding: 13px; }
+}
