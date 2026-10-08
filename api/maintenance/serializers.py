@@ -92,6 +92,14 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
         return order
 
     def validate(self, attrs):
+        if self.instance:
+            immutable_fields = {"equipment", "maintenance_type", "symptoms"}
+            attempted_changes = immutable_fields.intersection(attrs)
+            if attempted_changes:
+                raise serializers.ValidationError({
+                    field: "Este dado é definido na abertura da OS e não pode ser alterado."
+                    for field in attempted_changes
+                })
         if self.instance and self.instance.rental_inspection_id:
             inspection = self.instance.rental_inspection
             if inspection.inspection_type == "PRE_RENTAL":

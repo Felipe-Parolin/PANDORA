@@ -1,5 +1,6 @@
 from django.test import TestCase
 from django.core.exceptions import ValidationError
+from rest_framework.test import APIClient
 
 from accounts.models import User
 from assets.models import Equipment, EquipmentCategory
@@ -79,6 +80,34 @@ class PatternTests(TestCase):
             status=ServiceOrder.Status.IN_PROGRESS,
         )
         self.assertIsNotNone(order.started_at)
+
+    def test_service_order_identification_is_fixed_after_opening(self):
+        other = Equipment.objects.create(
+            category=self.equipment.category, name="Outro equipamento", brand="Marca", model="M2",
+            serial_number="SER-2", internal_code="EQ-T2", daily_rate=100,
+        )
+        order = ServiceOrder.objects.create(
+            equipment=self.equipment, opened_by=self.user, symptoms="Falha original",
+            maintenance_type=ServiceOrder.Type.CORRECTIVE,
+        )
+        client = APIClient()
+        client.force_authenticate(self.user)
+        for field, value in (
+            ("equipment", other.pk),
+            ("maintenance_type", ServiceOrder.Type.PREVENTIVE),
+            ("symptoms", "Relato substituído"),
+        ):
+            response = client.patch(f"/api/service-orders/{order.pk}/", {field: value}, format="json")
+            self.assertEqual(response.status_code, 400, response.data)
+            self.assertIn(field, response.data)
+        order.refresh_from_db()
+        self.assertEqual(order.equipment, self.equipment)
+        self.assertEqual(order.maintenance_type, ServiceOrder.Type.CORRECTIVE)
+        self.assertEqual(order.symptoms, "Falha original")
+        response = client.patch(f"/api/service-orders/{order.pk}/", {"priority": "ALTA"}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        order.refresh_from_db()
+        self.assertEqual(order.priority, "ALTA")
 
 
 class MaintenanceAlertTests(TestCase):

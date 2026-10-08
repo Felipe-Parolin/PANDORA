@@ -197,9 +197,10 @@ const saveOrder = () => {
     scheduled_at: orderForm.scheduled_at || null,
     abandoned_reason: orderForm.status === 'ABANDONED' ? orderForm.abandoned_reason : '',
   }
-  if (editing.value?.rental_inspection) {
+  if (editing.value) {
     delete payload.equipment
     delete payload.maintenance_type
+    delete payload.symptoms
   }
   return persist('/service-orders/', payload)
 }
@@ -328,10 +329,10 @@ onMounted(async () => {
     <ModalDialog v-if="modal === 'order'" :title="`Editar ${editing.number}`" wide @close="modal = null">
       <form class="service-order-form" @submit.prevent="saveOrder">
         <div class="order-form-intro"><Wrench :size="22" /><div><strong>{{ editing ? 'Registro técnico' : 'Novo atendimento' }}</strong><span>{{ editing?.maintenance_type === 'POST_RENTAL' ? 'Reparo pós-locação vinculado à inspeção de devolução.' : 'Organize o chamado e registre o que precisa ser verificado no equipamento.' }}</span></div></div>
-        <section class="order-form-section"><header><span>01</span><div><h3>Identificação</h3><p>Equipamento e motivo da intervenção</p></div></header><div class="form-grid">
-          <div class="form-field"><label>Equipamento</label><select v-model="orderForm.equipment" required :disabled="Boolean(editing?.rental_inspection)"><option v-for="item in equipment" :key="item.id" :value="item.id">{{ item.internal_code }} · {{ item.name }}</option></select></div>
-          <div class="form-field"><label>Tipo de manutenção</label><select v-model="orderForm.maintenance_type" :disabled="Boolean(editing?.rental_inspection)"><option value="CORRECTIVE">Corretiva</option><option value="PREVENTIVE">Preventiva</option><option value="SCHEDULED">Agendada</option><option value="PRE_RENTAL">Antes da locação</option><option value="POST_RENTAL">Pós-locação</option></select></div>
-          <div class="form-field span-2"><label>Sintomas / relato inicial</label><textarea v-model="orderForm.symptoms" rows="3" required placeholder="Descreva o problema, a solicitação ou o motivo da revisão." /></div>
+        <section class="order-form-section"><header><span>01</span><div><h3>Identificação</h3><p>Dados da abertura da OS; não podem ser alterados durante o atendimento</p></div></header><div class="form-grid">
+          <div class="form-field"><span class="order-readout-label">Equipamento</span><div class="order-readout">{{ equipmentById(editing.equipment)?.internal_code || 'Equipamento' }} · {{ editing.equipment_name }}</div></div>
+          <div class="form-field"><span class="order-readout-label">Tipo de manutenção</span><div class="order-readout">{{ editing.maintenance_type_label }}</div></div>
+          <div class="form-field span-2"><span class="order-readout-label">Sintomas / relato inicial</span><div class="order-readout order-readout-multiline">{{ editing.symptoms }}</div></div>
         </div></section>
         <section class="order-form-section"><header><span>02</span><div><h3>Planejamento e responsável</h3><p>Defina a fila, a prioridade e quem irá atender</p></div></header><div class="form-grid">
           <div class="form-field"><label>Status do chamado</label><select v-model="orderForm.status"><option value="OPEN">Aberto</option><option value="SCHEDULED">Agendado</option><option value="IN_PROGRESS">Em andamento</option><option value="WAITING_PARTS">Aguardando peças</option><option value="ABANDONED">Abandonado</option><option value="COMPLETED">Concluído</option><option value="CANCELLED">Cancelado</option></select></div>
