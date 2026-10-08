@@ -14,7 +14,8 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 - manuais, documentos, fotos e evidências acessados no próprio equipamento e na manutenção;
 - edição e exclusão contextual dos principais cadastros;
 - planos preventivos, agendados, pré-locação e pós-locação;
-- chamados de manutenção em filas operacionais: sem técnico, aguardando início, em andamento, aguardando peças, abandonados e concluídos;
+- manutenção organizada em quatro abas: calendário principal, locação (pré/pós), preventiva/agendada e corretiva; as etapas operacionais continuam disponíveis como filtro;
+- calendário mensal com OS agendadas, planos por data e chamados abertos hoje, abrindo diretamente o atendimento quando há um evento no dia;
 - abandono de chamado com justificativa obrigatória, datas de transição e redistribuição visível;
 - ordens preventivas/corretivas, técnico, atividades e liberação técnica;
 - orçamento de locação por cliente, período e múltiplos equipamentos;
