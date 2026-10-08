@@ -172,6 +172,12 @@ class RentalRulesTests(TestCase):
         self.assertEqual(order.maintenance_type, ServiceOrder.Type.PRE_RENTAL)
         self.assertEqual(order.status, ServiceOrder.Status.OPEN)
         self.assertEqual(order.opened_by, self.user)
+        self.client.force_authenticate(self.technician)
+        service_order = self.client.get(f"/api/service-orders/{order.pk}/")
+        self.assertEqual(service_order.status_code, 200, service_order.data)
+        self.assertEqual(service_order.data["rental_quote_number"], quote.number)
+        self.assertEqual(service_order.data["rental_customer_name"], self.customer.name)
+        self.assertEqual(service_order.data["rental_start_date"], quote.start_date.isoformat())
         self.assertIsNone(availability_reason(self.equipment, quote.start_date, quote.end_date, ignore_quote=quote))
 
     def test_critical_usage_maintenance_blocks_availability(self):

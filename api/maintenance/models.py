@@ -58,6 +58,7 @@ class ServiceOrder(models.Model):
     number = models.CharField(max_length=30, unique=True, blank=True)
     equipment = models.ForeignKey("assets.Equipment", on_delete=models.PROTECT, related_name="service_orders")
     plan = models.ForeignKey(MaintenancePlan, on_delete=models.SET_NULL, null=True, blank=True, related_name="service_orders")
+    plan_due_date = models.DateField(null=True, blank=True, editable=False)
     rental_inspection = models.OneToOneField("rentals.RentalInspection", on_delete=models.SET_NULL, null=True, blank=True, related_name="service_order")
     maintenance_type = models.CharField(max_length=20, choices=Type.choices)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
@@ -70,7 +71,7 @@ class ServiceOrder(models.Model):
     abandoned_at = models.DateTimeField(null=True, blank=True)
     abandoned_reason = models.TextField(blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
-    opened_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="opened_orders")
+    opened_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="opened_orders")
     technician = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="assigned_orders")
     final_tests = models.TextField(blank=True)
     released = models.BooleanField(default=False)
@@ -79,10 +80,13 @@ class ServiceOrder(models.Model):
 
     class Meta:
         ordering = ("-opened_at",)
+        constraints = [
+            models.UniqueConstraint(fields=("plan", "plan_due_date"), name="unique_service_order_plan_due_date"),
+        ]
 
     def save(self, *args, **kwargs):
         if not self.number:
-            prefix = self.opened_at.strftime("%Y") if self.opened_at else "OS"
+            prefix = self.opened_at.strftime("%Y") if self.opened_at else str(timezone.localdate().year)
             self.number = f"OS-{prefix}-{str(self.public_id)[:8].upper()}"
         now = timezone.now()
         if self.status == self.Status.IN_PROGRESS and not self.started_at:

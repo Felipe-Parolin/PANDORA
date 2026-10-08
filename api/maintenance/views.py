@@ -9,6 +9,7 @@ from rentals.services import refresh_equipment_status
 from .models import MaintenancePlan, ServiceOrder
 from .patterns import MaintenanceKitFactory
 from .serializers import MaintenancePlanSerializer, ServiceOrderSerializer
+from .services import generate_due_preventive_orders
 
 
 class MaintenancePlanViewSet(ModelViewSet):
@@ -18,6 +19,19 @@ class MaintenancePlanViewSet(ModelViewSet):
     acl_view = "maintenance.view"
     acl_manage = "maintenance.manage"
 
+    @action(detail=False, methods=["post"], url_path="sync-due")
+    def sync_due(self, request):
+        created = generate_due_preventive_orders()
+        return Response({"created": len(created), "order_ids": [order.pk for order in created]})
+
+    def perform_create(self, serializer):
+        serializer.save()
+        generate_due_preventive_orders()
+
+    def perform_update(self, serializer):
+        serializer.save()
+        generate_due_preventive_orders()
+
     def get_queryset(self):
         queryset = super().get_queryset()
         if self.request.query_params.get("equipment"):
@@ -26,7 +40,7 @@ class MaintenancePlanViewSet(ModelViewSet):
 
 
 class ServiceOrderViewSet(ModelViewSet):
-    queryset = ServiceOrder.objects.select_related("equipment", "plan", "opened_by", "technician", "rental_inspection__quote").prefetch_related("activities")
+    queryset = ServiceOrder.objects.select_related("equipment", "plan", "opened_by", "technician", "rental_inspection__quote__customer").prefetch_related("activities")
     serializer_class = ServiceOrderSerializer
     permission_classes = [ACLPermission]
     acl_view = "maintenance.view"
@@ -73,6 +87,8 @@ class ServiceOrderViewSet(ModelViewSet):
         order = self.get_object()
         if order.rental_inspection_id:
             return Response({"detail": "Chamados vinculados a locações não podem ser excluídos."}, status=status.HTTP_409_CONFLICT)
+        if order.plan_due_date:
+            return Response({"detail": "OS geradas por um plano periódico não podem ser excluídas. Ajuste o plano ou cancele o chamado."}, status=status.HTTP_409_CONFLICT)
         equipment = order.equipment
         response = super().destroy(request, *args, **kwargs)
         refresh_equipment_status(equipment)

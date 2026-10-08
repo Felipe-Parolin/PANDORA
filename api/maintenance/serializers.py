@@ -51,12 +51,16 @@ class MaintenancePlanSerializer(serializers.ModelSerializer):
 
 class ServiceOrderSerializer(serializers.ModelSerializer):
     equipment_name = serializers.CharField(source="equipment.name", read_only=True)
+    plan_name = serializers.CharField(source="plan.name", read_only=True)
     technician_name = serializers.CharField(source="technician.full_name", read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     maintenance_type_label = serializers.CharField(source="get_maintenance_type_display", read_only=True)
     rental_quote_id = serializers.IntegerField(source="rental_inspection.quote_id", read_only=True)
     rental_quote_number = serializers.CharField(source="rental_inspection.quote.number", read_only=True)
     rental_quote_status = serializers.CharField(source="rental_inspection.quote.status", read_only=True)
+    rental_customer_name = serializers.CharField(source="rental_inspection.quote.customer.name", read_only=True)
+    rental_start_date = serializers.DateField(source="rental_inspection.quote.start_date", read_only=True)
+    rental_end_date = serializers.DateField(source="rental_inspection.quote.end_date", read_only=True)
     inspection_result = serializers.CharField(source="rental_inspection.result", read_only=True)
     activities = MaintenanceActivitySerializer(many=True, required=False)
 

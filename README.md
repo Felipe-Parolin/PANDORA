@@ -14,8 +14,8 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 - manuais, documentos, fotos e evidências acessados no próprio equipamento e na manutenção;
 - edição e exclusão contextual dos principais cadastros;
 - planos preventivos, agendados, pré-locação e pós-locação;
-- manutenção organizada em quatro abas: calendário principal, locação (pré/pós), preventiva/agendada e corretiva; as etapas operacionais continuam disponíveis como filtro;
-- calendário mensal com OS agendadas, planos por data e chamados abertos hoje, abrindo diretamente o atendimento quando há um evento no dia;
+- manutenção organizada em duas áreas: locação (pré/pós) e oficina/revisões (preventivas, agendadas e corretivas), com etapa operacional como filtro;
+- OS em cartões com uma única ação de abertura; inspeção e mídias ficam dentro da OS, e planos periódicos permanecem acessíveis na oficina;
 - abandono de chamado com justificativa obrigatória, datas de transição e redistribuição visível;
 - ordens preventivas/corretivas, técnico, atividades e liberação técnica;
 - orçamento de locação por cliente, período e múltiplos equipamentos;
@@ -31,7 +31,7 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 - entrega vinculada à inspeção, prorrogação com nova consulta de disponibilidade e histórico;
 - devolução com comparação pré/pós-locação e equipamento bloqueado até a inspeção final;
 - encaminhamento automático de avarias da devolução para ordem de serviço;
-- planos de manutenção controlados por data, periodicidade e horas de uso;
+- planos de manutenção controlados por data, periodicidade e horas de uso, com OS preventiva agendada gerada automaticamente quando vence o intervalo em dias;
 - dashboard, listas em cartões e modais responsivos para desktop e celular;
 - dados demonstrativos e testes automatizados.
 
@@ -80,6 +80,16 @@ python manage.py runserver
 A API ficará em `http://127.0.0.1:8000/api/`.
 
 O `.env.example` já usa PostgreSQL. Informe `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST` e `DB_PORT`. Para um teste temporário sem PostgreSQL, defina explicitamente `DB_ENGINE=sqlite`.
+
+### Revisões periódicas
+
+Em **Manutenção → Oficina e revisões → Planos de revisão periódica**, cadastre o equipamento e o intervalo em dias. Sem data informada, o primeiro vencimento ocorre X dias após o cadastro (ou após a última manutenção, se registrada). Uma data de próxima execução pode antecipar o primeiro ciclo. Ao vencer, o sistema cria uma única OS **Preventiva · Agendada** vinculada ao plano; ela aparece na oficina e bloqueia a disponibilidade do equipamento até ser concluída ou cancelada. Ao concluir a OS, o próximo vencimento é calculado a partir da data da conclusão. A consulta da tela sincroniza planos vencidos e não duplica OS.
+
+Para gerar OS mesmo sem ninguém abrir o sistema, agende a execução diária deste comando no servidor (Agendador de Tarefas do Windows ou cron):
+
+```powershell
+python manage.py generate_preventive_orders
+```
 
 ### Consulta de endereço e simulação de frete
 
