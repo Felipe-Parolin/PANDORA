@@ -47,6 +47,7 @@ class TransportTask(models.Model):
     vehicle = models.ForeignKey(Vehicle, on_delete=models.PROTECT, null=True, blank=True, related_name="transport_tasks")
     driver = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="driving_tasks")
     address = models.CharField(max_length=255)
+    complement = models.CharField(max_length=120, blank=True)
     scheduled_at = models.DateTimeField(null=True, blank=True)
     departed_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)

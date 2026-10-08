@@ -1,8 +1,11 @@
 from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+import json
 
-from django.test import TestCase
+from django.core.cache import cache
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -13,6 +16,7 @@ from maintenance.models import MaintenancePlan, ServiceOrder
 from rentals.models import RentalInspection, RentalItem, RentalQuote
 from rentals.serializers import RentalQuoteSerializer
 from rentals.services import availability_reason
+from rentals.freight import estimate_freight, lookup_cep
 
 
 class RentalRulesTests(TestCase):
@@ -74,6 +78,82 @@ class RentalRulesTests(TestCase):
         self.assertTrue(serializer.is_valid(), serializer.errors)
         quote = serializer.save()
         self.assertEqual(quote.items.get().quantity_days, 3)
+
+    def test_percentage_discount_includes_transport_and_is_recalculated(self):
+        payload = {
+            "customer": self.customer.pk,
+            "start_date": timezone.localdate(),
+            "end_date": timezone.localdate() + timedelta(days=1),
+            "items": [{"equipment_id": self.equipment.pk, "daily_rate": "100.00", "quantity_days": 2}],
+            "delivery_transport_required": True,
+            "delivery_address": "Rua A, 10, Leme/SP",
+            "delivery_cep": "13610050",
+            "transport_fee": "20.00",
+            "discount_percent": "10.00",
+        }
+        serializer = RentalQuoteSerializer(data=payload, context={"request": SimpleNamespace(user=self.user)})
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        quote = serializer.save()
+        self.assertEqual(quote.discount, Decimal("22.00"))
+        self.assertEqual(quote.total, Decimal("198.00"))
+        quote.transport_fee = Decimal("40.00")
+        quote.recalculate()
+        self.assertEqual(quote.discount, Decimal("24.00"))
+        self.assertEqual(quote.total, Decimal("216.00"))
+
+    def test_percentage_and_cep_validation(self):
+        payload = {
+            "customer": self.customer.pk,
+            "start_date": timezone.localdate(),
+            "end_date": timezone.localdate(),
+            "items": [{"equipment_id": self.equipment.pk, "daily_rate": "100.00", "quantity_days": 1}],
+            "discount_percent": "101.00",
+            "delivery_cep": "123",
+        }
+        serializer = RentalQuoteSerializer(data=payload, context={"request": SimpleNamespace(user=self.user)})
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("delivery_cep", serializer.errors)
+        payload["delivery_cep"] = "13610050"
+        serializer = RentalQuoteSerializer(data=payload, context={"request": SimpleNamespace(user=self.user)})
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("discount_percent", serializer.errors)
+
+    @override_settings(FREIGHT_ORIGIN_CEP="13610050", FREIGHT_ORIGIN_LABEL="Origem de teste", FREIGHT_ORIGIN_PROVISIONAL=False,
+                       FREIGHT_MINIMUM_PER_LEG=Decimal("25"), FREIGHT_RATE_PER_KM=Decimal("3"), FREIGHT_ROAD_FACTOR=Decimal("1.3"))
+    @patch("rentals.freight.lookup_cep")
+    def test_freight_estimate_has_minimum_and_missing_coordinate_fallback(self, mocked_lookup):
+        mocked_lookup.return_value = {"latitude": -22.18556, "longitude": -47.39028}
+        destination = {"latitude": -22.18556, "longitude": -47.39028}
+        estimate = estimate_freight(destination)
+        self.assertEqual(estimate["fee"], "25.00")
+        self.assertEqual(estimate["distance_km"], "0.0")
+        self.assertEqual(estimate["origin_label"], "Origem de teste")
+        self.assertIsNone(estimate_freight({"latitude": None, "longitude": None})["fee"])
+
+    @patch("rentals.views.estimate_freight", return_value={"fee": "25.00", "distance_km": "0.0"})
+    @patch("rentals.views.lookup_cep", return_value={"cep": "13610050", "street": "Rua General Osório", "city": "Leme", "state": "SP"})
+    def test_address_lookup_endpoint(self, mocked_lookup, mocked_estimate):
+        response = self.client.get("/api/rental-quotes/lookup-address/?cep=13610050")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["street"], "Rua General Osório")
+        self.assertEqual(response.data["estimate"]["fee"], "25.00")
+        mocked_lookup.assert_called_once_with("13610050")
+
+    @patch("rentals.freight.urlopen")
+    def test_cep_lookup_normalizes_and_caches_provider_result(self, mocked_urlopen):
+        cache.delete("pandora:cep-v2:13610050")
+        response = MagicMock()
+        response.read.return_value = json.dumps({
+            "cep": "13610-050", "street": "Rua General Osório", "neighborhood": "Centro",
+            "city": "Leme", "state": "SP",
+            "location": {"coordinates": {"latitude": "-22.18556", "longitude": "-47.39028"}},
+        }).encode()
+        mocked_urlopen.return_value.__enter__.return_value = response
+        found = lookup_cep("13610-050")
+        self.assertEqual(found["cep"], "13610050")
+        self.assertEqual(found["latitude"], -22.18556)
+        self.assertEqual(lookup_cep("13610050"), found)
+        mocked_urlopen.assert_called_once()
 
     def test_reservation_creates_pre_rental_inspection_and_responsible(self):
         self.category.pre_rental_checklist = ["Trava da categoria", "Teste específico"]

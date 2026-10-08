@@ -26,23 +26,36 @@ const blockedEquipment = ref([])
 const availabilityLoading = ref(false)
 const availabilityChecked = ref(false)
 let availabilityRequest = 0
+const discountPercent = ref(0)
+const addressLookup = reactive({
+  delivery: { cep: '', loading: false, error: '', result: null },
+  return: { cep: '', loading: false, error: '', result: null },
+})
+const freightManuallyEdited = ref(false)
 const inspectionContext = ref(null)
 const operation = ref(null)
 const operationQuote = ref(null)
 const flowQuote = ref(null)
 const notice = ref('')
+const transportShortcut = ref('')
 const operationForm = reactive({ date: '', conditions: '', new_end_date: '', reason: '' })
 
-const form = reactive({ customer: '', start_date: '', end_date: '', status: 'DRAFT', conditions: '', discount: 0, notes: '', items: [], delivery_transport_required: false, return_transport_required: false, delivery_address: '', return_address: '', transport_fee: 0 })
+const form = reactive({ customer: '', start_date: '', end_date: '', status: 'DRAFT', conditions: '', discount: 0, notes: '', items: [], delivery_transport_required: false, return_transport_required: false, delivery_address: '', return_address: '', delivery_complement: '', return_complement: '', delivery_cep: '', return_cep: '', transport_fee: 0 })
 const days = computed(() => form.start_date && form.end_date ? Math.max(Math.round((new Date(`${form.end_date}T12:00:00`) - new Date(`${form.start_date}T12:00:00`)) / 86400000) + 1, 1) : 1)
 const datesValid = computed(() => form.start_date && form.end_date && form.end_date >= form.start_date)
 const selectedConflicts = computed(() => form.items.filter(line => blockedEquipment.value.some(item => item.equipment.id === line.equipment_id)))
 const subtotal = computed(() => form.items.reduce((sum, item) => sum + Number(item.daily_rate) * days.value, 0))
-const total = computed(() => Math.max(subtotal.value + Number(form.transport_fee || 0) - Number(form.discount || 0), 0))
+const discountBase = computed(() => subtotal.value + Number(form.transport_fee || 0))
+const discountAmount = computed(() => Math.round(Math.round(discountBase.value * 100) * Number(discountPercent.value || 0) / 100) / 100)
+const total = computed(() => Math.max(discountBase.value - discountAmount.value, 0))
+const freightEstimatesReady = computed(() => (!form.delivery_transport_required || addressLookup.delivery.result?.estimate?.fee !== null && addressLookup.delivery.result?.estimate?.fee !== undefined) &&
+  (!form.return_transport_required || addressLookup.return.result?.estimate?.fee !== null && addressLookup.return.result?.estimate?.fee !== undefined) &&
+  (form.delivery_transport_required || form.return_transport_required))
 const readyToSave = computed(() => Boolean(form.customer && datesValid.value && availabilityChecked.value && !availabilityLoading.value && form.items.length && !selectedConflicts.value.length &&
   (!form.delivery_transport_required || form.delivery_address.trim()) && (!form.return_transport_required || form.return_address.trim()) &&
   form.items.every(item => item.daily_rate !== '' && Number(item.daily_rate) >= 0) &&
-  Number(form.transport_fee || 0) >= 0 && Number(form.discount || 0) >= 0 && Number(form.discount || 0) <= subtotal.value + Number(form.transport_fee || 0)))
+  (!form.delivery_cep || /^\d{8}$/.test(form.delivery_cep)) && (!form.return_cep || /^\d{8}$/.test(form.return_cep)) &&
+  Number(form.transport_fee || 0) >= 0 && discountPercent.value !== '' && Number(discountPercent.value) >= 0 && Number(discountPercent.value) <= 100))
 const activeQuotes = computed(() => quotes.value.filter(item => ['DRAFT', 'SENT', 'APPROVED', 'ACTIVE', 'RETURNED'].includes(item.status)))
 const tabMatches = (quote, key) => ({
   ALL: true,
@@ -121,9 +134,11 @@ async function reserve(quote) {
   busy.value = true
   error.value = ''
   notice.value = ''
+  transportShortcut.value = ''
   try {
     await api.post(`/rental-quotes/${quote.id}/reserve/`)
     notice.value = `${quote.number} reservada. Chamados de inspeção pré-locação abertos na Manutenção.${quote.delivery_transport_required ? ' A viagem de entrega foi criada em Transporte.' : ''}`
+    transportShortcut.value = quote.delivery_transport_required ? quote.number : ''
     await load()
   } catch (event) { error.value = apiError(event) }
   finally { busy.value = false }
@@ -135,6 +150,7 @@ async function submitOperation() {
   busy.value = true
   error.value = ''
   notice.value = ''
+  transportShortcut.value = ''
   const config = {
     deliver: { url: 'deliver', payload: { delivered_at: operationForm.date, conditions: operationForm.conditions }, message: 'Entrega registrada e equipamentos marcados como locados.' },
     extend: { url: 'extend', payload: { new_end_date: operationForm.new_end_date, conditions: operationForm.conditions }, message: 'Prorrogação registrada após nova validação de disponibilidade.' },
@@ -155,6 +171,7 @@ async function finalizeReturn(quote) {
   busy.value = true
   error.value = ''
   notice.value = ''
+  transportShortcut.value = ''
   try {
     const { data } = await api.post(`/rental-quotes/${quote.id}/finalize-return/`)
     const routed = data.routed_to_maintenance || []
@@ -171,14 +188,22 @@ function open(item = null) {
   blockedEquipment.value = []
   availabilityChecked.value = false
   equipmentSearch.value = ''
+  freightManuallyEdited.value = Boolean(item)
+  for (const leg of ['delivery', 'return']) {
+    Object.assign(addressLookup[leg], { cep: item?.[`${leg}_cep`] || '', loading: false, error: '', result: null })
+  }
   if (item) {
     Object.assign(form, {
       customer: item.customer, start_date: item.start_date, end_date: item.end_date, status: item.status,
       conditions: item.conditions, discount: item.discount, notes: item.notes,
       delivery_transport_required: item.delivery_transport_required, return_transport_required: item.return_transport_required,
-      delivery_address: item.delivery_address, return_address: item.return_address, transport_fee: item.transport_fee,
+      delivery_address: item.delivery_address, return_address: item.return_address,
+      delivery_complement: item.delivery_complement || '', return_complement: item.return_complement || '',
+      delivery_cep: item.delivery_cep || '', return_cep: item.return_cep || '', transport_fee: item.transport_fee,
       items: item.items.map(line => ({ equipment_id: line.equipment, name: line.equipment_name, code: line.internal_code, daily_rate: line.daily_rate, quantity_days: line.quantity_days })),
     })
+    const base = Number(item.subtotal) + Number(item.transport_fee)
+    discountPercent.value = item.discount_percent != null ? Number(item.discount_percent) : base ? Math.round(Number(item.discount) / base * 10000) / 100 : 0
   } else {
     const today = new Date()
     const later = new Date(today)
@@ -187,12 +212,62 @@ function open(item = null) {
     Object.assign(form, {
       customer: '', start_date: localDay(today), end_date: localDay(later), status: 'DRAFT',
       conditions: 'Locação somente de equipamento. Entrega e devolução conforme acordado.', discount: 0, notes: '', items: [],
-      delivery_transport_required: false, return_transport_required: false, delivery_address: '', return_address: '', transport_fee: 0,
+      delivery_transport_required: false, return_transport_required: false, delivery_address: '', return_address: '', delivery_complement: '', return_complement: '', delivery_cep: '', return_cep: '', transport_fee: 0,
     })
+    discountPercent.value = 0
   }
   modal.value = true
   loadAvailability()
 }
+
+function onCepInput(leg) {
+  const state = addressLookup[leg]
+  state.cep = state.cep.replace(/\D/g, '').slice(0, 8)
+  state.result = null
+  state.error = ''
+  form[`${leg}_cep`] = state.cep
+  if (!freightManuallyEdited.value) form.transport_fee = 0
+}
+
+function applyFreightEstimate() {
+  if (!freightEstimatesReady.value) return
+  form.transport_fee = (form.delivery_transport_required ? Number(addressLookup.delivery.result.estimate.fee) : 0) +
+    (form.return_transport_required ? Number(addressLookup.return.result.estimate.fee) : 0)
+  freightManuallyEdited.value = false
+}
+
+async function searchAddress(leg) {
+  const state = addressLookup[leg]
+  state.error = ''
+  if (!/^\d{8}$/.test(state.cep)) {
+    state.error = 'Informe um CEP com 8 dígitos.'
+    return
+  }
+  state.loading = true
+  try {
+    const { data } = await api.get('/rental-quotes/lookup-address/', { params: { cep: state.cep } })
+    if (!modal.value || data.cep !== state.cep) return
+    state.result = data
+    form[`${leg}_cep`] = data.cep
+    form[`${leg}_address`] = [data.street, data.neighborhood, `${data.city}/${data.state}`, `CEP ${data.cep.slice(0, 5)}-${data.cep.slice(5)}`].filter(Boolean).join(', ')
+    applyFreightEstimate()
+  } catch (event) {
+    state.error = apiError(event)
+  } finally {
+    state.loading = false
+  }
+}
+
+function useDeliveryAddressForReturn() {
+  addressLookup.return.cep = addressLookup.delivery.cep
+  addressLookup.return.result = addressLookup.delivery.result
+  addressLookup.return.error = ''
+  form.return_cep = form.delivery_cep
+  form.return_address = form.delivery_address
+  form.return_complement = form.delivery_complement
+  applyFreightEstimate()
+}
+
 
 async function loadAvailability() {
   const request = ++availabilityRequest
@@ -232,14 +307,18 @@ watch(() => [form.start_date, form.end_date], () => {
   if (modal.value) loadAvailability()
 }, { flush: 'sync' })
 watch(() => [form.delivery_transport_required, form.return_transport_required], ([delivery, returning]) => {
-  if (!delivery && !returning) form.transport_fee = 0
+  if (!delivery && !returning) {
+    form.transport_fee = 0
+    freightManuallyEdited.value = false
+  } else if (!freightManuallyEdited.value) applyFreightEstimate()
 })
 
 async function save() {
   if (!readyToSave.value) return
   busy.value = true
   error.value = ''
-  const payload = { ...form, items: form.items.map(({ equipment_id, daily_rate, quantity_days }) => ({ equipment_id, daily_rate, quantity_days })) }
+  const payload = { ...form, discount_percent: Number(discountPercent.value), discount: discountAmount.value,
+    items: form.items.map(({ equipment_id, daily_rate, quantity_days }) => ({ equipment_id, daily_rate, quantity_days })) }
   try {
     editing.value ? await api.patch(`/rental-quotes/${editing.value.id}/`, payload) : await api.post('/rental-quotes/', payload)
     modal.value = false
@@ -271,7 +350,7 @@ onMounted(load)
 <template>
   <div class="page">
     <header class="page-heading compact"><div><span class="eyebrow">COMERCIAL</span><h1>Locações e orçamentos</h1><p>Disponibilidade antecipada, composição de preço e acompanhamento do funil.</p></div><button v-if="can('rentals.manage')" class="btn primary" @click="open()"><Plus :size="18" />Gerar orçamento</button></header>
-    <div v-if="notice" class="success-strip">{{ notice }}</div>
+    <div v-if="notice" class="success-strip rental-success-strip"><span>{{ notice }}</span><router-link v-if="transportShortcut && can('logistics.view')" class="btn secondary" :to="{ name: 'logistics', query: { quote: transportShortcut } }"><Truck :size="16" />Ver em Transporte</router-link></div>
     <div v-if="error && !modal && !operation && !inspectionContext" class="floating-error">{{ error }}</div>
 
     <section class="quote-summary">
@@ -337,9 +416,13 @@ onMounted(load)
 
         <section class="quote-editor-section"><header><div><h3>Itens do orçamento</h3><p v-if="!form.items.length">Selecione um equipamento acima para começar.</p><p v-else>{{ form.items.length }} equipamento(s) · ajuste a diária se necessário.</p></div></header><div class="quote-lines"><div v-for="item in form.items" :key="item.equipment_id" class="quote-line"><div><strong>{{ item.name }}</strong><span>{{ item.code }} · {{ days }} diária(s)</span></div><label class="rate-editor"><span>Diária (R$)</span><input v-model="item.daily_rate" type="number" min="0" step="0.01" required /></label><strong>{{ money(Number(item.daily_rate) * days) }}</strong><button type="button" class="icon-btn" :aria-label="`Remover ${item.name}`" @click="toggle({ id: item.equipment_id })"><Trash2 :size="17" /></button></div></div><div v-if="selectedConflicts.length" class="quote-conflict"><AlertCircle :size="17" />{{ selectedConflicts.length }} item(ns) selecionado(s) ficaram indisponíveis após a troca de datas. Remova-os ou escolha outro período.</div></section>
 
-        <details class="quote-extra"><summary>Transporte e condições (opcional)</summary><div class="form-grid"><div class="form-field span-2"><label>Transporte</label><div class="transport-choices"><label><input v-model="form.delivery_transport_required" type="checkbox" /> Entrega com veículo</label><label><input v-model="form.return_transport_required" type="checkbox" /> Coleta na devolução</label></div><small>Se não marcar, a retirada e a devolução são no balcão.</small></div><div v-if="form.delivery_transport_required" class="form-field span-2"><label for="quote-delivery-address">Endereço de entrega</label><input id="quote-delivery-address" v-model="form.delivery_address" required maxlength="255" placeholder="Rua, número, bairro e cidade" /></div><div v-if="form.return_transport_required" class="form-field span-2"><label for="quote-return-address">Endereço da coleta</label><input id="quote-return-address" v-model="form.return_address" required maxlength="255" placeholder="Rua, número, bairro e cidade" /></div><div class="form-field span-2"><label for="quote-conditions">Condições comerciais</label><textarea id="quote-conditions" v-model="form.conditions" rows="2" /></div><div class="form-field span-2"><label for="quote-notes">Observações internas</label><textarea id="quote-notes" v-model="form.notes" rows="2" placeholder="Não aparecem nas condições enviadas ao cliente." /></div></div></details>
+        <details class="quote-extra"><summary>Transporte e condições (opcional)</summary><div class="form-grid"><div class="form-field span-2"><label>Transporte</label><div class="transport-choices"><label><input v-model="form.delivery_transport_required" type="checkbox" /> Entrega com veículo</label><label><input v-model="form.return_transport_required" type="checkbox" /> Coleta na devolução</label></div><small>Se não marcar, a retirada e a devolução são no balcão.</small></div>
+          <div v-if="form.delivery_transport_required" class="address-search-group span-2"><div class="form-field"><label for="quote-delivery-cep">CEP da entrega</label><div class="address-lookup-row"><input id="quote-delivery-cep" v-model="addressLookup.delivery.cep" inputmode="numeric" maxlength="8" placeholder="00000000" @input="onCepInput('delivery')" /><button type="button" class="btn secondary" :disabled="addressLookup.delivery.loading" @click="searchAddress('delivery')">{{ addressLookup.delivery.loading ? 'Buscando...' : 'Buscar CEP' }}</button></div><small v-if="addressLookup.delivery.error" class="address-lookup-error">{{ addressLookup.delivery.error }}</small><small v-else>Consulta sob demanda pela BrasilAPI; acrescente o número no endereço abaixo.</small></div><div class="form-field"><label for="quote-delivery-address">Endereço completo da entrega</label><input id="quote-delivery-address" v-model="form.delivery_address" required maxlength="255" placeholder="Rua, número, bairro, cidade/UF" /></div><div class="form-field"><label for="quote-delivery-complement">Complemento da entrega (opcional)</label><input id="quote-delivery-complement" v-model="form.delivery_complement" maxlength="120" placeholder="Bloco, apartamento, portão ou ponto de referência" /></div><p v-if="addressLookup.delivery.result" class="freight-leg-note">{{ addressLookup.delivery.result.estimate.fee != null ? `Frete sugerido para entrega: ${money(addressLookup.delivery.result.estimate.fee)} · ${Number(addressLookup.delivery.result.estimate.distance_km) < 0.1 ? 'tarifa mínima local' : `${addressLookup.delivery.result.estimate.distance_km} km aproximados`}` : addressLookup.delivery.result.estimate.reason }}</p></div>
+          <div v-if="form.return_transport_required" class="address-search-group span-2"><div class="address-group-heading"><strong>Coleta na devolução</strong><button v-if="form.delivery_transport_required && form.delivery_address" type="button" @click="useDeliveryAddressForReturn">Usar endereço da entrega</button></div><div class="form-field"><label for="quote-return-cep">CEP da coleta</label><div class="address-lookup-row"><input id="quote-return-cep" v-model="addressLookup.return.cep" inputmode="numeric" maxlength="8" placeholder="00000000" @input="onCepInput('return')" /><button type="button" class="btn secondary" :disabled="addressLookup.return.loading" @click="searchAddress('return')">{{ addressLookup.return.loading ? 'Buscando...' : 'Buscar CEP' }}</button></div><small v-if="addressLookup.return.error" class="address-lookup-error">{{ addressLookup.return.error }}</small><small v-else>Se a coleta for em outro local, pesquise o CEP correspondente.</small></div><div class="form-field"><label for="quote-return-address">Endereço completo da coleta</label><input id="quote-return-address" v-model="form.return_address" required maxlength="255" placeholder="Rua, número, bairro, cidade/UF" /></div><div class="form-field"><label for="quote-return-complement">Complemento da coleta (opcional)</label><input id="quote-return-complement" v-model="form.return_complement" maxlength="120" placeholder="Bloco, apartamento, portão ou ponto de referência" /></div><p v-if="addressLookup.return.result" class="freight-leg-note">{{ addressLookup.return.result.estimate.fee != null ? `Frete sugerido para coleta: ${money(addressLookup.return.result.estimate.fee)} · ${Number(addressLookup.return.result.estimate.distance_km) < 0.1 ? 'tarifa mínima local' : `${addressLookup.return.result.estimate.distance_km} km aproximados`}` : addressLookup.return.result.estimate.reason }}</p></div>
+          <p v-if="freightEstimatesReady" class="freight-estimate-note span-2">Estimativa a partir de {{ addressLookup.delivery.result?.estimate?.origin_label || addressLookup.return.result?.estimate?.origin_label }}: {{ money((form.delivery_transport_required ? Number(addressLookup.delivery.result.estimate.fee) : 0) + (form.return_transport_required ? Number(addressLookup.return.result.estimate.fee) : 0)) }}. Distância aproximada, não rota viária nem tarifa oficial. {{ addressLookup.delivery.result?.estimate?.provisional_origin || addressLookup.return.result?.estimate?.provisional_origin ? 'A origem ainda é provisória.' : '' }} Ajuste o frete abaixo antes de enviar.</p>
+          <div class="form-field span-2"><label for="quote-conditions">Condições comerciais</label><textarea id="quote-conditions" v-model="form.conditions" rows="2" /></div><div class="form-field span-2"><label for="quote-notes">Observações internas</label><textarea id="quote-notes" v-model="form.notes" rows="2" placeholder="Não aparecem nas condições enviadas ao cliente." /></div></div></details>
 
-        <div class="quote-editor-footer"><div class="quote-editor-values"><span>Equipamentos <strong>{{ money(subtotal) }}</strong></span><label v-if="form.delivery_transport_required || form.return_transport_required">Transporte (R$)<input v-model="form.transport_fee" type="number" min="0" step="0.01" /></label><label>Desconto (R$)<input v-model="form.discount" type="number" min="0" :max="subtotal + Number(form.transport_fee || 0)" step="0.01" /></label><div>Total estimado <strong>{{ money(total) }}</strong></div></div><div class="form-field quote-editor-status"><label for="quote-status">Etapa</label><select id="quote-status" v-model="form.status"><option value="DRAFT">Rascunho</option><option value="SENT">Enviado ao cliente</option></select><small>Salvar o orçamento não reserva estoque. A reserva ocorre somente na aprovação.</small></div></div>
+        <div class="quote-editor-footer"><div class="quote-editor-values"><span>Equipamentos <strong>{{ money(subtotal) }}</strong></span><label v-if="form.delivery_transport_required || form.return_transport_required">Transporte (R$)<input v-model="form.transport_fee" type="number" min="0" step="0.01" @input="freightManuallyEdited = true" /></label><label>Desconto (%)<input v-model="discountPercent" type="number" min="0" max="100" step="0.01" /></label><span class="discount-breakdown">{{ money(discountAmount) }} de desconto sobre equipamentos + transporte</span><div>Total estimado <strong>{{ money(total) }}</strong></div></div><div class="form-field quote-editor-status"><label for="quote-status">Etapa</label><select id="quote-status" v-model="form.status"><option value="DRAFT">Rascunho</option><option value="SENT">Enviado ao cliente</option></select><small>Salvar o orçamento não reserva estoque. A reserva ocorre somente na aprovação.</small></div></div>
         <div v-if="error" class="error-message">{{ error }}</div><div class="modal-actions"><button type="button" class="btn secondary" @click="modal = false">Cancelar</button><span class="spacer" /><button class="btn primary" :disabled="busy || !readyToSave">{{ busy ? 'Salvando...' : (editing ? 'Salvar alterações' : 'Salvar orçamento') }}</button></div>
       </form>
     </ModalDialog>

@@ -256,6 +256,7 @@ td small { margin-top: 4px; color: var(--muted); font-size: 10px; }
 .error-message { margin-top: 14px; padding: 10px 12px; border: 1px solid #f2c3bd; border-radius: 7px; color: #8b3329; background: #fff0ee; font-size: 11px; }
 .floating-error { margin-bottom: 15px; padding: 11px 14px; border-left: 4px solid var(--red); border-radius: 7px; color: #8b3329; background: #fff0ee; font-size: 11px; }
 .success-strip { margin-bottom: 15px; padding: 11px 14px; border-left: 4px solid var(--green); border-radius: 7px; color: #1e6647; background: #e6f3ec; font-size: 11px; font-weight: 700; }
+.rental-success-strip { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
 .confirm-content { display: flex; align-items: flex-start; gap: 14px; }.confirm-content p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }.confirm-icon { display: grid; place-items: center; flex: 0 0 auto; width: 44px; height: 44px; border-radius: 50%; color: var(--red); background: #fae9e7; }
 
 .media-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
@@ -416,10 +417,24 @@ td small { margin-top: 4px; color: var(--muted); font-size: 10px; }
 .quote-editor-values input { width: 115px; min-height: 36px; padding: 7px 9px; border: 1px solid #d7d7d7; border-radius: 7px; background: white; color: var(--ink); font-size: 12px; }
 .quote-editor-values > div { padding-top: 10px; border-top: 1px solid #ead7a7; font-weight: 800; }
 .quote-editor-values > div strong { font-size: 20px; color: #a65b00; }
+.address-search-group { display: grid; gap: 12px; padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: white; }
+.address-lookup-row { display: flex; gap: 9px; }
+.address-lookup-row input { flex: 1; min-width: 0; }
+.address-lookup-row .btn { flex: 0 0 auto; }
+.address-group-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.address-group-heading strong { font-size: 11px; }
+.address-group-heading button { padding: 0; border: 0; color: #9b5700; background: none; font-size: 11px; font-weight: 800; cursor: pointer; }
+.address-lookup-error { color: #a1392f !important; }
+.freight-leg-note { margin: 0; color: #236b4b; font-size: 11px; font-weight: 700; line-height: 1.45; }
+.freight-estimate-note { margin: 0; padding: 12px; border-radius: 7px; color: #654b14; background: #fff3d6; font-size: 11px; line-height: 1.5; }
+.discount-breakdown { justify-content: flex-start !important; color: var(--muted) !important; font-size: 10px !important; }
 @media (max-width: 580px) {
   .quote-editor-section > header { align-items: stretch; flex-direction: column; }
   .quote-editor-section .search-box { flex: none; width: 100%; }
   .quote-editor-footer { grid-template-columns: 1fr; }
   .quote-editor-values input { font-size: 16px; }
   .quick-order-options .form-grid, .quote-extra .form-grid { padding: 13px; }
+  .address-lookup-row { flex-wrap: wrap; }
+  .address-lookup-row .btn { flex: 1 1 100%; }
+  .address-group-heading { align-items: flex-start; flex-direction: column; }
 }

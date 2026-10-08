@@ -1,5 +1,5 @@
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -28,8 +28,13 @@ class RentalQuote(models.Model):
     return_transport_required = models.BooleanField(default=False)
     delivery_address = models.CharField(max_length=255, blank=True)
     return_address = models.CharField(max_length=255, blank=True)
+    delivery_complement = models.CharField(max_length=120, blank=True)
+    return_complement = models.CharField(max_length=120, blank=True)
+    delivery_cep = models.CharField(max_length=8, blank=True)
+    return_cep = models.CharField(max_length=8, blank=True)
     transport_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="rental_quotes")
@@ -62,8 +67,10 @@ class RentalQuote(models.Model):
     def recalculate(self):
         subtotal = sum((item.total for item in self.items.all()), Decimal("0"))
         self.subtotal = subtotal
+        if self.discount_percent is not None:
+            self.discount = ((subtotal + self.transport_fee) * self.discount_percent / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         self.total = max(subtotal + self.transport_fee - self.discount, Decimal("0"))
-        self.save(update_fields=("subtotal", "total", "updated_at"))
+        self.save(update_fields=("subtotal", "discount", "total", "updated_at"))
 
 
 class RentalItem(models.Model):

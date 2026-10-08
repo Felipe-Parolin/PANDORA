@@ -10,10 +10,11 @@ def ensure_transport_task(quote, leg, created_by):
     if not required:
         return None
     address = quote.delivery_address if leg == TransportTask.Leg.DELIVERY else quote.return_address
+    complement = quote.delivery_complement if leg == TransportTask.Leg.DELIVERY else quote.return_complement
     task, _ = TransportTask.objects.get_or_create(
         quote=quote,
         leg=leg,
-        defaults={"address": address, "created_by": created_by},
+        defaults={"address": address, "complement": complement, "created_by": created_by},
     )
     return task
 

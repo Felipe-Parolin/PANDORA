@@ -1,6 +1,7 @@
 from django.db import transaction
 from django.utils import timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
+import re
 from rest_framework import serializers
 
 from assets.models import Equipment
@@ -123,6 +124,16 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
             "returned_by", "returned_at", "return_conditions", "cancelled_by", "cancelled_at",
         )
 
+    def validate_delivery_cep(self, value):
+        if value and not re.fullmatch(r"\d{8}", value):
+            raise serializers.ValidationError("Informe um CEP com 8 dígitos.")
+        return value
+
+    def validate_return_cep(self, value):
+        if value and not re.fullmatch(r"\d{8}", value):
+            raise serializers.ValidationError("Informe um CEP com 8 dígitos.")
+        return value
+
     def validate(self, attrs):
         start = attrs.get("start_date", getattr(self.instance, "start_date", None))
         end = attrs.get("end_date", getattr(self.instance, "end_date", None))
@@ -139,7 +150,8 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
         if self.instance and self.instance.status == RentalQuote.Status.APPROVED and any(
             key in attrs for key in (
                 "items", "customer", "start_date", "end_date", "status", "delivery_transport_required",
-                "return_transport_required", "delivery_address", "return_address", "transport_fee",
+                "return_transport_required", "delivery_address", "return_address", "delivery_complement", "return_complement",
+                "delivery_cep", "return_cep", "transport_fee",
             )
         ):
             raise serializers.ValidationError("A reserva aprovada não pode trocar cliente, equipamentos ou período. Cancele e gere outro orçamento.")
@@ -151,8 +163,13 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"items": "O mesmo equipamento não pode aparecer mais de uma vez."})
         days = (end - start).days + 1 if start and end else 0
         calculated_subtotal = sum((item.get("daily_rate", item["equipment"].daily_rate) * days for item in effective_items), Decimal("0"))
-        discount = attrs.get("discount", getattr(self.instance, "discount", Decimal("0")))
         transport_fee = attrs.get("transport_fee", getattr(self.instance, "transport_fee", Decimal("0")))
+        discount_percent = attrs.get("discount_percent", getattr(self.instance, "discount_percent", None))
+        if discount_percent is not None:
+            if discount_percent < 0 or discount_percent > 100:
+                raise serializers.ValidationError({"discount_percent": "O desconto deve ficar entre 0% e 100%."})
+            attrs["discount"] = ((calculated_subtotal + transport_fee) * discount_percent / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        discount = attrs.get("discount", getattr(self.instance, "discount", Decimal("0")))
         if transport_fee < 0:
             raise serializers.ValidationError({"transport_fee": "O frete não pode ser negativo."})
         if transport_fee and not (

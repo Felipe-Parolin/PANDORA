@@ -15,6 +15,7 @@ from maintenance.models import ServiceOrder
 from logistics.models import TransportTask
 from logistics.services import ensure_transport_task, transport_completed
 from .models import RentalExtension, RentalInspection, RentalQuote
+from .freight import estimate_freight, lookup_cep
 from .serializers import RentalInspectionSerializer, RentalQuoteSerializer
 from .services import availability_reason, ensure_inspections, ensure_pre_rental_orders, refresh_equipment_status
 
@@ -56,6 +57,12 @@ class RentalQuoteViewSet(ModelViewSet):
     @staticmethod
     def _audit(request, quote, action, **data):
         AuditLog.objects.create(user=request.user, entity="RentalQuote", record_id=str(quote.pk), action=action, data=data)
+
+    @action(detail=False, methods=["get"], url_path="lookup-address")
+    def lookup_address(self, request):
+        self._require_acl(request, "rentals.manage")
+        address = lookup_cep(request.query_params.get("cep"))
+        return Response({**address, "estimate": estimate_freight(address)})
 
     @transaction.atomic
     @action(detail=True, methods=["post"])

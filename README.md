@@ -19,9 +19,9 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 - abandono de chamado com justificativa obrigatória, datas de transição e redistribuição visível;
 - ordens preventivas/corretivas, técnico, atividades e liberação técnica;
 - orçamento de locação por cliente, período e múltiplos equipamentos;
-- transporte opcional de entrega e/ou coleta, com endereço e valor discriminado no orçamento;
+- transporte opcional de entrega e/ou coleta, com CEP, endereço, complemento e valor discriminado no orçamento;
 - cadastro de veículos e planejamento de viagens com motorista, horário, status e histórico protegido;
-- fluxo integrado: reserva abre inspeção na Manutenção; liberação técnica precede a viagem; viagem concluída precede a entrega ou devolução quando o transporte é contratado;
+- fluxo integrado: ao aprovar a reserva com entrega, a viagem aparece em Transporte; a liberação técnica precede a viagem; viagem concluída precede a entrega ou devolução quando o transporte é contratado;
 - disponibilidade validada antes da seleção, com motivo dos bloqueios por equipamento;
 - cálculo automático de diárias, preço negociado por item, desconto e total;
 - bloqueio de sobreposição quando o orçamento vira reserva aprovada;
@@ -80,6 +80,12 @@ python manage.py runserver
 A API ficará em `http://127.0.0.1:8000/api/`.
 
 O `.env.example` já usa PostgreSQL. Informe `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST` e `DB_PORT`. Para um teste temporário sem PostgreSQL, defina explicitamente `DB_ENGINE=sqlite`.
+
+### Consulta de endereço e simulação de frete
+
+No orçamento, o botão **Buscar CEP** consulta a [BrasilAPI CEP V2](https://brasilapi.com.br/docs) sob demanda, preenche o endereço e sugere um frete por trecho. O cálculo usa coordenadas aproximadas do CEP, distância em linha reta ajustada por `FREIGHT_ROAD_FACTOR`, `FREIGHT_RATE_PER_KM` e `FREIGHT_MINIMUM_PER_LEG`. Entrega e coleta são cobradas como trechos separados. Não é uma rota viária nem uma tarifa oficial: o vendedor pode corrigir o valor antes de salvar.
+
+Configure `FREIGHT_ORIGIN_CEP` com o CEP real do depósito e ajuste as tarifas no `.env` da API antes de utilizar os valores comercialmente. Enquanto não configurado, a origem **provisória** é o Centro de Leme/SP; se a consulta não devolver coordenadas, o frete fica para preenchimento manual. O desconto do orçamento é informado em percentual sobre equipamentos **mais transporte**, e o valor em reais calculado é persistido para manter compatibilidade com as demais telas.
 
 ### 2. Frontend
 
