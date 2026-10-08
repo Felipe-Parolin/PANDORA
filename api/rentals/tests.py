@@ -9,7 +9,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from accounts.models import User
+from accounts.models import AccessGroup, User
 from assets.models import Equipment, EquipmentCategory
 from customers.models import Customer
 from maintenance.models import MaintenancePlan, ServiceOrder
@@ -218,6 +218,14 @@ class RentalRulesTests(TestCase):
         self.assertEqual(order.status, ServiceOrder.Status.COMPLETED)
         self.assertTrue(order.released)
         self.assertEqual(order.technician, self.technician)
+        old_equipment = Equipment.objects.create(
+            category=self.category, name="Item removido", brand="Marca", model="M2",
+            serial_number="OLD-1", internal_code="EQ-OLD", daily_rate=100,
+        )
+        RentalInspection.objects.create(
+            quote=quote, equipment=old_equipment, inspection_type=RentalInspection.Type.PRE_RENTAL,
+            result=RentalInspection.Result.BLOCKED,
+        )
         self.client.force_authenticate(self.user)
         delivered = self.client.post(f"/api/rental-quotes/{quote.pk}/deliver/", {"conditions": "Sem ressalvas."}, format="json")
         self.assertEqual(delivered.status_code, 200, delivered.data)
@@ -312,6 +320,13 @@ class RentalRulesTests(TestCase):
         returned = self.client.post(f"/api/rental-quotes/{quote.pk}/return/", {"conditions": "Equipamento recebido."}, format="json")
         self.assertEqual(returned.status_code, 200, returned.data)
         inspection = quote.inspections.get(inspection_type=RentalInspection.Type.RETURN)
+        order = ServiceOrder.objects.get(rental_inspection=inspection)
+        self.assertEqual(order.maintenance_type, ServiceOrder.Type.POST_RENTAL)
+        self.assertEqual(order.status, ServiceOrder.Status.OPEN)
+        self.assertEqual(order.opened_by, self.user)
+        self.client.force_authenticate(self.technician)
+        premature = self.client.patch(f"/api/service-orders/{order.pk}/", {"status": ServiceOrder.Status.COMPLETED}, format="json")
+        self.assertEqual(premature.status_code, 400, premature.data)
         checklist = [{**item, "status": "WARNING"} for item in inspection.checklist]
         inspected = self.client.patch(
             f"/api/rental-inspections/{inspection.pk}/",
@@ -324,10 +339,62 @@ class RentalRulesTests(TestCase):
             format="json",
         )
         self.assertEqual(inspected.status_code, 200, inspected.data)
+        order.refresh_from_db()
+        self.assertEqual(order.status, ServiceOrder.Status.IN_PROGRESS)
+        self.assertEqual(order.technician, self.technician)
+        self.client.force_authenticate(self.user)
         finalized = self.client.post(f"/api/rental-quotes/{quote.pk}/finalize-return/")
         self.assertEqual(finalized.status_code, 200, finalized.data)
         quote.refresh_from_db()
         self.equipment.refresh_from_db()
         self.assertEqual(quote.status, RentalQuote.Status.COMPLETED)
         self.assertEqual(self.equipment.status, Equipment.Status.MAINTENANCE)
-        self.assertTrue(ServiceOrder.objects.filter(rental_inspection=inspection).exists())
+        self.assertEqual(ServiceOrder.objects.filter(rental_inspection=inspection).count(), 1)
+
+    def test_clean_final_inspection_completes_linked_order_and_releases_equipment(self):
+        quote = self.create_quote(status=RentalQuote.Status.ACTIVE)
+        self.assertEqual(self.client.post(f"/api/rental-quotes/{quote.pk}/return/").status_code, 200)
+        inspection = quote.inspections.get(inspection_type=RentalInspection.Type.RETURN)
+        order = ServiceOrder.objects.get(rental_inspection=inspection)
+        self.client.force_authenticate(self.technician)
+        inspected = self.client.patch(
+            f"/api/rental-inspections/{inspection.pk}/",
+            {"checklist": [{**item, "status": "OK"} for item in inspection.checklist],
+             "result": RentalInspection.Result.APPROVED, "condition": RentalInspection.Condition.GOOD},
+            format="json",
+        )
+        self.assertEqual(inspected.status_code, 200, inspected.data)
+        order.refresh_from_db()
+        self.assertEqual(order.status, ServiceOrder.Status.COMPLETED)
+        self.assertTrue(order.released)
+        self.assertEqual(order.technician, self.technician)
+        self.client.force_authenticate(self.user)
+        finalized = self.client.post(f"/api/rental-quotes/{quote.pk}/finalize-return/")
+        self.assertEqual(finalized.status_code, 200, finalized.data)
+        self.equipment.refresh_from_db()
+        self.assertEqual(self.equipment.status, Equipment.Status.AVAILABLE)
+        self.assertEqual(ServiceOrder.objects.filter(rental_inspection=inspection).count(), 1)
+
+    def test_sales_cannot_complete_final_inspection_outside_maintenance(self):
+        quote = self.create_quote(status=RentalQuote.Status.ACTIVE)
+        self.assertEqual(self.client.post(f"/api/rental-quotes/{quote.pk}/return/").status_code, 200)
+        inspection = quote.inspections.get(inspection_type=RentalInspection.Type.RETURN)
+        denied = self.client.patch(
+            f"/api/rental-inspections/{inspection.pk}/",
+            {"result": RentalInspection.Result.APPROVED,
+             "checklist": [{**item, "status": "OK"} for item in inspection.checklist]}, format="json",
+        )
+        self.assertEqual(denied.status_code, 403)
+        inspector_group = AccessGroup.objects.create(
+            name="Inspeção final", permissions=["maintenance.view", "rentals.view", "rentals.inspect"]
+        )
+        inspector = User.objects.create_user(
+            "inspector@example.com", "strong-password", full_name="Inspetor", access_group=inspector_group
+        )
+        self.client.force_authenticate(inspector)
+        allowed = self.client.patch(
+            f"/api/rental-inspections/{inspection.pk}/",
+            {"result": RentalInspection.Result.APPROVED,
+             "checklist": [{**item, "status": "OK"} for item in inspection.checklist]}, format="json",
+        )
+        self.assertEqual(allowed.status_code, 200, allowed.data)

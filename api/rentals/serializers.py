@@ -92,6 +92,31 @@ class RentalInspectionSerializer(serializers.ModelSerializer):
                     order.released = False
                 order.save()
                 refresh_equipment_status(inspection.equipment)
+            else:
+                order = ServiceOrder.objects.select_for_update().filter(rental_inspection=inspection).first()
+                if not order:
+                    raise serializers.ValidationError("O chamado de inspeção final não foi encontrado na manutenção.")
+                needs_repair = inspection.result == RentalInspection.Result.BLOCKED or inspection.condition in {
+                    RentalInspection.Condition.DAMAGED, RentalInspection.Condition.CRITICAL,
+                }
+                if needs_repair:
+                    order.status = ServiceOrder.Status.IN_PROGRESS
+                    order.technician = actor
+                    order.priority = "CRÍTICA" if inspection.critical_impediment else "ALTA"
+                    order.diagnosis = inspection.observations or "Avaria identificada na inspeção de devolução."
+                    order.final_tests = ""
+                    order.released = False
+                elif inspection.result in {RentalInspection.Result.APPROVED, RentalInspection.Result.APPROVED_WITH_NOTES}:
+                    order.status = ServiceOrder.Status.COMPLETED
+                    order.technician = actor
+                    order.final_tests = f"Checklist de devolução concluído: {inspection.get_result_display()}."
+                    order.released = True
+                else:
+                    order.status = ServiceOrder.Status.OPEN
+                    order.final_tests = ""
+                    order.released = False
+                order.save()
+                refresh_equipment_status(inspection.equipment)
             return inspection
 
 

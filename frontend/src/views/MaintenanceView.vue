@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   AlertTriangle, CalendarDays, ChevronDown, ClipboardPlus, Files, Plus, Search, Trash2, Wrench,
@@ -167,7 +167,11 @@ function openOrder(item = null, defaults = {}) {
     technicians.value.push({ id: item.technician, full_name: item.technician_name || 'Técnico atual' })
   }
   editing.value = item
-  modal.value = !item ? 'quick-order' : !can('maintenance.manage') || terminalStatuses.includes(item.status) ? 'order-detail' : item.rental_inspection && item.maintenance_type === 'PRE_RENTAL' ? 'linked-order' : 'order'
+  modal.value = !item ? 'quick-order'
+    : !can('maintenance.manage') || terminalStatuses.includes(item.status) ? 'order-detail'
+      : item.rental_inspection && item.maintenance_type === 'PRE_RENTAL' ? 'linked-order'
+        : item.rental_inspection && item.maintenance_type === 'POST_RENTAL' && item.inspection_result === 'PENDING' ? 'return-order'
+          : 'order'
   error.value = ''
   quickPlanning.value = Boolean(defaults.scheduled_at)
   Object.assign(orderForm, item ? {
@@ -311,16 +315,31 @@ async function remove() {
     busy.value = false
   }
 }
+function applyRouteContext() {
+  if (route.query.order) {
+    const matched = orders.value.find(order => String(order.id) === String(route.query.order))
+    if (matched) {
+      tab.value = matched.rental_quote_number ? 'rental' : 'workshop'
+      queue.value = 'ALL'
+      search.value = ''
+      if (matched.rental_quote_number) expandedRentalGroup.value = rentalGroupKey(matched)
+      openOrder(matched)
+    }
+    return
+  }
+  if (route.query.quote) {
+    tab.value = 'rental'
+    queue.value = 'ALL'
+    search.value = String(route.query.quote)
+    const matched = rentalOrders.value.find(order => order.rental_quote_number === String(route.query.quote))
+    if (matched) expandedRentalGroup.value = rentalGroupKey(matched)
+  }
+}
+watch(() => [route.query.order, route.query.quote], applyRouteContext)
 onMounted(async () => {
   try {
     await load()
-    if (route.query.quote) {
-      tab.value = 'rental'
-      queue.value = 'ALL'
-      search.value = String(route.query.quote)
-      const matched = rentalOrders.value.find(order => order.rental_quote_number === String(route.query.quote))
-      if (matched) expandedRentalGroup.value = rentalGroupKey(matched)
-    }
+    applyRouteContext()
   } catch (event) {
     error.value = apiError(event)
   }
@@ -376,7 +395,8 @@ onMounted(async () => {
       </details>
       </div>
 
-    <ModalDialog v-if="modal === 'order-detail'" :title="editing.number" @close="modal = null"><div class="maintenance-readonly-detail"><StatusBadge :value="editing.status" :label="editing.status_label" /><h3>{{ editing.equipment_name }}</h3><p>{{ editing.maintenance_type_label }} · {{ editing.technician_name || 'Sem técnico' }}</p><dl><div><dt>Agendamento</dt><dd>{{ editing.scheduled_at ? `${shortDate(scheduledDay(editing.scheduled_at))} às ${new Date(editing.scheduled_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'Sem data' }}</dd></div><div><dt>Solicitação</dt><dd>{{ editing.symptoms }}</dd></div><div v-if="editing.diagnosis"><dt>Diagnóstico</dt><dd>{{ editing.diagnosis }}</dd></div><div v-if="editing.abandoned_reason"><dt>Motivo do abandono</dt><dd>{{ editing.abandoned_reason }}</dd></div></dl><div class="maintenance-order-tools"><button v-if="editing.rental_inspection" class="btn primary" @click="modal = null; openInspection(editing)"><ClipboardPlus :size="16" />Ver inspeção da locação</button><button v-if="can('media.view')" class="btn secondary" @click="openMedia(editing.equipment)"><Files :size="16" />Mídias do equipamento</button></div></div><div class="modal-actions"><span class="spacer" /><button class="btn secondary" @click="modal = null">Fechar</button></div></ModalDialog>
+    <ModalDialog v-if="modal === 'order-detail'" :title="editing.number" @close="modal = null"><div class="maintenance-readonly-detail"><StatusBadge :value="editing.status" :label="editing.status_label" /><h3>{{ editing.equipment_name }}</h3><p>{{ editing.maintenance_type_label }} · {{ editing.technician_name || 'Sem técnico' }}</p><dl><div><dt>Agendamento</dt><dd>{{ editing.scheduled_at ? `${shortDate(scheduledDay(editing.scheduled_at))} às ${new Date(editing.scheduled_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'Sem data' }}</dd></div><div><dt>Solicitação</dt><dd>{{ editing.symptoms }}</dd></div><div v-if="editing.diagnosis"><dt>Diagnóstico</dt><dd>{{ editing.diagnosis }}</dd></div><div v-if="editing.abandoned_reason"><dt>Motivo do abandono</dt><dd>{{ editing.abandoned_reason }}</dd></div></dl><div class="maintenance-order-tools"><button v-if="editing.rental_inspection" class="btn primary" @click="modal = null; openInspection(editing)"><ClipboardPlus :size="16" />{{ editing.maintenance_type === 'POST_RENTAL' ? editing.inspection_result === 'PENDING' && (can('maintenance.manage') || can('rentals.inspect')) ? 'Abrir inspeção final' : 'Ver inspeção final' : 'Ver inspeção pré-locação' }}</button><button v-if="can('media.view')" class="btn secondary" @click="openMedia(editing.equipment)"><Files :size="16" />Mídias do equipamento</button></div></div><div class="modal-actions"><span class="spacer" /><button class="btn secondary" @click="modal = null">Fechar</button></div></ModalDialog>
+    <ModalDialog v-if="modal === 'return-order'" :title="`Inspeção final · ${editing.number}`" @close="modal = null"><div class="maintenance-readonly-detail"><StatusBadge :value="editing.status" :label="editing.status_label" /><h3>{{ editing.equipment_name }}</h3><p>Locação {{ editing.rental_quote_number }} · devolução registrada</p><dl><div><dt>Solicitação</dt><dd>{{ editing.symptoms }}</dd></div><div><dt>Próxima etapa</dt><dd>Confira o equipamento e conclua o checklist de devolução. Se houver avaria, esta mesma OS seguirá para reparo.</dd></div></dl><div class="maintenance-order-tools"><button class="btn primary" @click="modal = null; openInspection(editing)"><ClipboardPlus :size="16" />Abrir inspeção final</button><button v-if="can('media.view')" class="btn secondary" @click="openMedia(editing.equipment)"><Files :size="16" />Mídias do equipamento</button></div></div><div class="modal-actions"><span class="spacer" /><button class="btn secondary" @click="modal = null">Fechar</button></div></ModalDialog>
     <ModalDialog v-if="modal === 'plan-detail'" :title="editing.name" @close="modal = null"><div class="maintenance-readonly-detail"><StatusBadge :value="editing.alert_status" :label="({ OK: 'Em dia', UPCOMING: 'Próxima', OVERDUE: 'Vencida', CRITICAL: 'Crítica' })[editing.alert_status]" /><h3>{{ editing.equipment_name }}</h3><p>{{ editing.maintenance_type_label }} · {{ editing.criticality_label }}</p><dl><div><dt>Próxima execução</dt><dd>{{ editing.due_date ? shortDate(editing.due_date) : 'Sem data' }}</dd></div><div v-if="editing.interval_days"><dt>Periodicidade</dt><dd>A cada {{ editing.interval_days }} dias</dd></div><div v-if="editing.due_usage_hours !== null"><dt>Gatilho por uso</dt><dd>{{ editing.due_usage_hours }} h</dd></div></dl><div v-if="can('media.view')" class="maintenance-order-tools"><button class="btn secondary" @click="openMedia(editing.equipment)"><Files :size="16" />Mídias do equipamento</button></div></div><div class="modal-actions"><span class="spacer" /><button class="btn secondary" @click="modal = null">Fechar</button></div></ModalDialog>
 
     <ModalDialog v-if="modal === 'linked-order'" :title="`Atendimento ${editing.number}`" wide @close="modal = null">
@@ -418,7 +438,7 @@ onMounted(async () => {
           <div class="form-field span-2"><span class="order-readout-label">Sintomas / relato inicial</span><div class="order-readout order-readout-multiline">{{ editing.symptoms }}</div></div>
           <div v-if="editing.plan_due_date" class="form-field span-2"><span class="order-readout-label">Plano periódico</span><div class="order-readout">{{ editing.plan_name }} · vencimento em {{ shortDate(editing.plan_due_date) }}</div></div>
         </div></section>
-        <div class="maintenance-order-tools"><button v-if="editing.rental_inspection" type="button" class="btn primary" @click="modal = null; openInspection(editing)"><ClipboardPlus :size="16" />Abrir inspeção da locação</button><button v-if="can('media.view')" type="button" class="btn secondary" @click="openMedia(editing.equipment)"><Files :size="16" />Mídias do equipamento</button></div>
+        <div class="maintenance-order-tools"><button v-if="editing.rental_inspection" type="button" class="btn primary" @click="modal = null; openInspection(editing)"><ClipboardPlus :size="16" />{{ editing.maintenance_type === 'POST_RENTAL' ? 'Ver inspeção final' : 'Abrir inspeção pré-locação' }}</button><button v-if="can('media.view')" type="button" class="btn secondary" @click="openMedia(editing.equipment)"><Files :size="16" />Mídias do equipamento</button></div>
         <section class="order-form-section"><header><span>02</span><div><h3>Planejamento e responsável</h3><p>Defina a fila, a prioridade e quem irá atender</p></div></header><div class="form-grid">
           <div class="form-field"><label>Status do chamado</label><select v-model="orderForm.status"><option value="OPEN">Aberto</option><option value="SCHEDULED">Agendado</option><option value="IN_PROGRESS">Em andamento</option><option value="WAITING_PARTS">Aguardando peças</option><option value="ABANDONED">Abandonado</option><option value="COMPLETED">Concluído</option><option value="CANCELLED">Cancelado</option></select></div>
           <div class="form-field"><label>Prioridade</label><select v-model="orderForm.priority"><option>NORMAL</option><option>ALTA</option><option>CRÍTICA</option></select></div>

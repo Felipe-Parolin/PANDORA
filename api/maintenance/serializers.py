@@ -121,6 +121,10 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({"status": "Conclua a inspeção para liberar este chamado."})
                 if inspection.result in {"APPROVED", "APPROVED_WITH_NOTES"} and requested_status != self.instance.status:
                     raise serializers.ValidationError({"status": "O chamado já foi liberado pela inspeção."})
+            elif inspection.inspection_type == "RETURN" and inspection.result == "PENDING":
+                requested_status = attrs.get("status", self.instance.status)
+                if requested_status in {ServiceOrder.Status.COMPLETED, ServiceOrder.Status.CANCELLED} or attrs.get("released"):
+                    raise serializers.ValidationError({"status": "Conclua a inspeção final antes de encerrar esta OS."})
         released = attrs.get("released", getattr(self.instance, "released", False))
         status = attrs.get("status", getattr(self.instance, "status", None))
         tests = attrs.get("final_tests", getattr(self.instance, "final_tests", ""))

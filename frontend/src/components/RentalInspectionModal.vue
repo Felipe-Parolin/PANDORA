@@ -23,7 +23,7 @@ const selected = computed(() => inspections.value.find(item => item.id === selec
 const title = computed(() => props.type === 'PRE_RENTAL' ? 'Inspeção pré-locação' : 'Inspeção de devolução')
 const editable = computed(() => (
   (props.type === 'PRE_RENTAL' && can('maintenance.manage') && props.quote.status === 'APPROVED')
-  || (props.type === 'RETURN' && can('rentals.inspect') && props.quote.status === 'RETURNED')
+  || (props.type === 'RETURN' && (can('maintenance.manage') || can('maintenance.view') && can('rentals.inspect')) && props.quote.status === 'RETURNED')
 ))
 const completed = computed(() => inspections.value.filter(item => item.result !== 'PENDING').length)
 const previous = computed(() => props.quote.inspections?.find(item => item.inspection_type === 'PRE_RENTAL' && item.equipment === selected.value?.equipment))
@@ -104,6 +104,7 @@ onMounted(load)
     </div>
 
     <div v-if="type === 'PRE_RENTAL'" class="inspection-flow-hint"><ShieldAlert :size="18" /><span>Chamado da manutenção: conclua o checklist para liberar a entrega. Uma falha mantém o equipamento bloqueado.</span></div>
+    <div v-else class="inspection-flow-hint"><ShieldAlert :size="18" /><span>Inspeção final vinculada à OS pós-locação. Se houver avaria, a mesma OS seguirá para reparo antes de liberar o equipamento.</span></div>
     <div v-if="inspections.length" class="inspection-layout">
       <nav class="inspection-equipment-list" aria-label="Equipamentos da inspeção">
         <button v-for="item in inspections" :key="item.id" :class="{ active: item.id === selected?.id }" @click="selectInspection(item)">
@@ -136,7 +137,7 @@ onMounted(load)
           <div class="form-field"><label>Condição geral</label><select v-model="selected.condition" :disabled="!editable"><option value="GOOD">Bom</option><option value="REGULAR">Regular</option><option value="DAMAGED">Avariado</option><option value="CRITICAL">Crítico</option></select></div>
           <div class="form-field"><label>Resultado</label><select v-model="selected.result" :disabled="!editable"><option value="PENDING">Pendente</option><option value="APPROVED">Aprovado</option><option value="APPROVED_WITH_NOTES">Aprovado com ressalvas</option><option value="BLOCKED">Impedido</option></select></div>
           <div class="form-field span-2"><label>Observações</label><textarea v-model="selected.observations" :disabled="!editable" rows="3" placeholder="Registre estado, avarias, acessórios e demais evidências." /></div>
-          <label v-if="editable" class="check-line span-2 critical-check"><input v-model="selected.critical_impediment" type="checkbox" />Impedimento crítico — bloquear entrega e encaminhar para manutenção</label>
+          <label v-if="editable" class="check-line span-2 critical-check"><input v-model="selected.critical_impediment" type="checkbox" />{{ type === 'RETURN' ? 'Avaria crítica — manter equipamento bloqueado e encaminhar para reparo' : 'Impedimento crítico — bloquear entrega e encaminhar para manutenção' }}</label>
         </div>
 
         <div class="inspection-media">

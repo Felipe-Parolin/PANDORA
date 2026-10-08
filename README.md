@@ -8,7 +8,7 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 
 - autenticação JWT com ACL aplicada na interface e nos endpoints;
 - grupos padrão **Administrador**, **Vendedor** e **Manutenção**, além de grupos personalizados;
-- matriz de permissões por operação, com criação, edição e exclusão de grupos;
+- matriz de permissões por operação, com criação, edição e exclusão de grupos; a sidebar e as rotas refletem as permissões atuais do usuário;
 - cadastro de funcionários e clientes PF/PJ;
 - categorias e equipamentos com QR Code gerado, baixável e resolvido pelo sistema;
 - manuais, documentos, fotos e evidências acessados no próprio equipamento e na manutenção;
@@ -29,8 +29,8 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 - reserva com responsável, condições e cancelamento auditável;
 - OS pré-locação automática na Manutenção para cada equipamento reservado, com checklist por categoria, fotos, observações e impedimento crítico;
 - entrega vinculada à inspeção, prorrogação com nova consulta de disponibilidade e histórico;
-- devolução com comparação pré/pós-locação e equipamento bloqueado até a inspeção final;
-- encaminhamento automático de avarias da devolução para ordem de serviço;
+- devolução com OS de inspeção final aberta na Manutenção para cada equipamento; Locações acompanha o progresso e conclui a devolução;
+- encaminhamento de avarias para reparo na mesma OS pós-locação, mantendo o equipamento bloqueado;
 - planos de manutenção controlados por data, periodicidade e horas de uso, com OS preventiva agendada gerada automaticamente quando vence o intervalo em dias;
 - dashboard, listas em cartões e modais responsivos para desktop e celular;
 - dados demonstrativos e testes automatizados.
@@ -77,6 +77,8 @@ python manage.py seed_demo
 python manage.py runserver
 ```
 
+Para reproduzir a base fictícia mais completa desta entrega, use `python manage.py seed_realistic_demo` no lugar de `seed_demo`. O comando exige PostgreSQL `pandora_db` local em modo de desenvolvimento; cria clientes, equipamentos com fotos, veículos, usuários, locações em várias etapas, inspeções, OS, planos de revisão e notificações. É idempotente para os registros demonstrativos, mas **não limpa dados existentes**. Faça backup antes de executar `flush` em uma base que já contenha dados.
+
 A API ficará em `http://127.0.0.1:8000/api/`.
 
 O `.env.example` já usa PostgreSQL. Informe `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST` e `DB_PORT`. Para um teste temporário sem PostgreSQL, defina explicitamente `DB_ENGINE=sqlite`.
@@ -116,8 +118,13 @@ Também é possível usar `npm install` e `npm run dev`. A aplicação ficará e
 | Administrador | `admin@pandora.local` | `Pandora@123` |
 | Vendedor | `vendas@pandora.local` | `Pandora@123` |
 | Manutenção | `manutencao@pandora.local` | `Pandora@123` |
+| Logística | `logistica@pandora.local` | `Pandora@123` |
 
 As credenciais acima são somente para desenvolvimento. Troque-as em qualquer ambiente compartilhado.
+
+O sino do cabeçalho mostra notificações individuais de novas OS, reservas/devoluções e viagens. O contador é atualizado automaticamente a cada 30 segundos; é possível abrir o registro relacionado ou marcar tudo como lido. A API mantém o histórico em `/api/notifications/` e não expõe notificações de outros usuários.
+
+O backup local demonstrativo fica em `backups/PANDORA-demo-completo-2026-10-08-final.zip`: inclui o dump PostgreSQL, as fotos em `media/` e instruções de restauração. `backups/` é ignorado pelo Git para não publicar dados ou cópias de banco acidentalmente.
 
 ## Qualidade
 
@@ -135,7 +142,7 @@ pnpm build
 Consulte [Arquitetura](docs/ARCHITECTURE.md) e [Contrato inicial da API](docs/API.md) para decisões de domínio, regras e endpoints.
 Para a emissão fiscal futura em Leme/SP, consulte [Preparação fiscal](docs/FISCAL_READINESS.md).
 
-Após atualizar uma instalação existente, execute `python manage.py migrate` e entre novamente no sistema para atualizar as permissões de Transporte na interface.
+Após atualizar uma instalação existente, execute `python manage.py migrate`. A interface consulta as permissões atuais do usuário ao navegar, sem exigir novo login após ajustes de ACL.
 
 Os fluxos de locação implementam os cards [#37](https://github.com/Felipe-Parolin/PANDORA/issues/37), [#38](https://github.com/Felipe-Parolin/PANDORA/issues/38), [#39](https://github.com/Felipe-Parolin/PANDORA/issues/39), [#40](https://github.com/Felipe-Parolin/PANDORA/issues/40) e [#41](https://github.com/Felipe-Parolin/PANDORA/issues/41).
 

@@ -2,8 +2,13 @@ from django.db import connection
 from django.db.models import Count, Sum
 from django.db.utils import OperationalError
 from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.viewsets import GenericViewSet
+from rest_framework.mixins import ListModelMixin
+from rest_framework.decorators import action
+from django.utils import timezone
 
 from assets.models import Equipment
 from customers.models import Customer
@@ -11,6 +16,8 @@ from maintenance.models import MaintenancePlan, ServiceOrder
 from maintenance.services import maintenance_alert_status
 from rentals.models import RentalQuote
 from accounts.permissions import ACLPermission
+from .models import Notification
+from .serializers import NotificationSerializer
 
 
 class HealthView(APIView):
@@ -45,3 +52,31 @@ class DashboardView(APIView):
             "quotes_total": quotes_total,
             "recent_quotes": list(RentalQuote.objects.select_related("customer").values("id", "number", "customer__name", "status", "total", "created_at")[:5]),
         })
+
+
+class NotificationViewSet(ListModelMixin, GenericViewSet):
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ("get", "post", "head", "options")
+
+    def get_queryset(self):
+        return Notification.objects.filter(recipient=self.request.user)
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        unread_count = queryset.filter(read_at__isnull=True).count()
+        notifications = queryset[:30]
+        return Response({"unread_count": unread_count, "results": self.get_serializer(notifications, many=True).data})
+
+    @action(detail=True, methods=["post"], url_path="read")
+    def read(self, request, pk=None):
+        notification = self.get_object()
+        if not notification.read_at:
+            notification.read_at = timezone.now()
+            notification.save(update_fields=("read_at",))
+        return Response(self.get_serializer(notification).data)
+
+    @action(detail=False, methods=["post"], url_path="read-all")
+    def read_all(self, request):
+        count = self.get_queryset().filter(read_at__isnull=True).update(read_at=timezone.now())
+        return Response({"marked_read": count})

@@ -72,6 +72,35 @@ def ensure_pre_rental_orders(quote, opened_by):
         )
 
 
+def ensure_return_orders(quote, opened_by):
+    """Open one final-inspection OS per returned equipment, including clean returns."""
+    current_equipment_ids = quote.items.values_list("equipment_id", flat=True)
+    for inspection in quote.inspections.filter(
+        inspection_type=RentalInspection.Type.RETURN, equipment_id__in=current_equipment_ids
+    ):
+        needs_repair = inspection.result == RentalInspection.Result.BLOCKED or inspection.condition in {
+            RentalInspection.Condition.DAMAGED, RentalInspection.Condition.CRITICAL,
+        }
+        completed = inspection.result in {
+            RentalInspection.Result.APPROVED, RentalInspection.Result.APPROVED_WITH_NOTES,
+        } and not needs_repair
+        ServiceOrder.objects.get_or_create(
+            rental_inspection=inspection,
+            defaults={
+                "equipment": inspection.equipment,
+                "maintenance_type": ServiceOrder.Type.POST_RENTAL,
+                "status": ServiceOrder.Status.COMPLETED if completed else ServiceOrder.Status.IN_PROGRESS if needs_repair else ServiceOrder.Status.OPEN,
+                "priority": "CRÍTICA" if inspection.critical_impediment else "ALTA" if needs_repair else "NORMAL",
+                "symptoms": f"Inspeção final após devolução da locação {quote.number}.",
+                "diagnosis": inspection.observations if needs_repair else "",
+                "opened_by": opened_by,
+                "technician": inspection.performed_by if completed or needs_repair else None,
+                "final_tests": "Checklist de devolução concluído." if completed else "",
+                "released": completed,
+            },
+        )
+
+
 def blocking_service_orders(equipment):
     return ServiceOrder.objects.filter(equipment=equipment).exclude(
         status__in=[ServiceOrder.Status.COMPLETED, ServiceOrder.Status.CANCELLED]

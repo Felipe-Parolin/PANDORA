@@ -1,13 +1,15 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { KeyRound, Pencil, Plus, Search, ShieldCheck, Trash2, UserCog, UsersRound } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import ModalDialog from '../components/ModalDialog.vue'
 import StatusBadge from '../components/StatusBadge.vue'
-import { api, apiError, auth, can, rows } from '../services/api'
+import { api, apiError, auth, can, canAny, refreshCurrentUser, rows } from '../services/api'
 
 const users = ref([]), customers = ref([]), groups = ref([]), catalog = ref([]), search = ref(''), modal = ref(null), editing = ref(null), deleting = ref(null), error = ref(''), busy = ref(false)
-const initialTab = can('customers.view') ? 'customers' : 'users'
+const router = useRouter()
+const initialTab = can('customers.view') ? 'customers' : can('accounts.users.view') ? 'users' : 'groups'
 const tab = ref(initialTab)
 const customerForm = reactive({ person_type: 'PJ', name: '', document: '', email: '', phone: '', address: '', notes: '', is_active: true })
 const userForm = reactive({ full_name: '', email: '', phone: '', role: 'SALES', access_group: '', password: '', is_active: true })
@@ -17,6 +19,10 @@ const filteredUsers = computed(() => users.value.filter(x => `${x.full_name} ${x
 const modules = computed(() => Object.entries(catalog.value.reduce((acc, item) => { (acc[item.module] ||= []).push(item); return acc }, {})))
 
 async function load() {
+  users.value = []
+  customers.value = []
+  groups.value = []
+  catalog.value = []
   const requests = []
   if (can('customers.view')) requests.push(api.get('/customers/').then(r => customers.value = rows(r.data)))
   if (can('accounts.users.view')) requests.push(api.get('/users/').then(r => users.value = rows(r.data)))
@@ -51,7 +57,19 @@ async function saveUser() {
 async function saveGroup() { await persist('/access-groups/', groupForm) }
 async function persist(base, payload) {
   busy.value = true; error.value = ''
-  try { editing.value ? await api.patch(`${base}${editing.value.id}/`, payload) : await api.post(base, payload); modal.value = null; editing.value = null; await load() }
+  try {
+    editing.value ? await api.patch(`${base}${editing.value.id}/`, payload) : await api.post(base, payload)
+    modal.value = null
+    editing.value = null
+    if (base === '/access-groups/' || base === '/users/') await refreshCurrentUser()
+    if (!canAny(['customers.view', 'accounts.users.view', 'accounts.groups.manage'])) await router.replace('/')
+    else {
+      if ((tab.value === 'customers' && !can('customers.view')) || (tab.value === 'users' && !can('accounts.users.view')) || (tab.value === 'groups' && !can('accounts.groups.manage'))) {
+        tab.value = can('customers.view') ? 'customers' : can('accounts.users.view') ? 'users' : 'groups'
+      }
+      await load()
+    }
+  }
   catch (e) { error.value = apiError(e) }
   finally { busy.value = false }
 }

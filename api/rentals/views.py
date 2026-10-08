@@ -17,7 +17,7 @@ from logistics.services import ensure_transport_task, transport_completed
 from .models import RentalExtension, RentalInspection, RentalQuote
 from .freight import estimate_freight, lookup_cep
 from .serializers import RentalInspectionSerializer, RentalQuoteSerializer
-from .services import availability_reason, ensure_inspections, ensure_pre_rental_orders, refresh_equipment_status
+from .services import availability_reason, ensure_inspections, ensure_pre_rental_orders, ensure_return_orders, refresh_equipment_status
 
 
 class RentalQuoteViewSet(ModelViewSet):
@@ -126,7 +126,10 @@ class RentalQuoteViewSet(ModelViewSet):
         quote = RentalQuote.objects.select_for_update().get(pk=self.get_object().pk)
         if quote.status != RentalQuote.Status.APPROVED:
             raise ValidationError({"status": "A entrega exige uma reserva aprovada."})
-        inspections = list(quote.inspections.filter(inspection_type=RentalInspection.Type.PRE_RENTAL).select_related("equipment"))
+        current_equipment_ids = quote.items.values_list("equipment_id", flat=True)
+        inspections = list(quote.inspections.filter(
+            inspection_type=RentalInspection.Type.PRE_RENTAL, equipment_id__in=current_equipment_ids
+        ).select_related("equipment"))
         if len(inspections) != quote.items.count() or any(item.result == RentalInspection.Result.PENDING for item in inspections):
             raise ValidationError({"inspections": "Conclua a inspeção pré-locação de todos os equipamentos."})
         blocked = [item.equipment.internal_code for item in inspections if item.result == RentalInspection.Result.BLOCKED or item.critical_impediment]
@@ -227,6 +230,7 @@ class RentalQuoteViewSet(ModelViewSet):
         quote.return_conditions = str(request.data.get("conditions", "")).strip()
         quote.save(update_fields=("status", "returned_by", "returned_at", "return_conditions", "updated_at"))
         ensure_inspections(quote, RentalInspection.Type.RETURN)
+        ensure_return_orders(quote, request.user)
         for line in quote.items.select_related("equipment"):
             refresh_equipment_status(line.equipment)
         self._audit(request, quote, "RETURNED", returned_at=return_time.isoformat(), conditions=quote.return_conditions)
@@ -239,9 +243,13 @@ class RentalQuoteViewSet(ModelViewSet):
         quote = RentalQuote.objects.select_for_update().get(pk=self.get_object().pk)
         if quote.status != RentalQuote.Status.RETURNED:
             raise ValidationError({"status": "A locação ainda não está aguardando inspeção final."})
-        inspections = list(quote.inspections.filter(inspection_type=RentalInspection.Type.RETURN).select_related("equipment"))
+        current_equipment_ids = quote.items.values_list("equipment_id", flat=True)
+        inspections = list(quote.inspections.filter(
+            inspection_type=RentalInspection.Type.RETURN, equipment_id__in=current_equipment_ids
+        ).select_related("equipment"))
         if len(inspections) != quote.items.count() or any(item.result == RentalInspection.Result.PENDING for item in inspections):
             raise ValidationError({"inspections": "Conclua a inspeção final de todos os equipamentos."})
+        ensure_return_orders(quote, request.user)
         quote.status = RentalQuote.Status.COMPLETED
         quote.save(update_fields=("status", "updated_at"))
         routed = []
@@ -250,16 +258,6 @@ class RentalQuoteViewSet(ModelViewSet):
                 RentalInspection.Condition.DAMAGED, RentalInspection.Condition.CRITICAL,
             }
             if needs_service:
-                ServiceOrder.objects.get_or_create(
-                    rental_inspection=inspection,
-                    defaults={
-                        "equipment": inspection.equipment,
-                        "maintenance_type": ServiceOrder.Type.POST_RENTAL,
-                        "priority": "CRÍTICA" if inspection.critical_impediment else "ALTA",
-                        "symptoms": inspection.observations or "Avaria identificada na inspeção de devolução.",
-                        "opened_by": request.user,
-                    },
-                )
                 routed.append(inspection.equipment.internal_code)
             refresh_equipment_status(inspection.equipment)
         self._audit(request, quote, "RETURN_COMPLETED", routed_to_maintenance=routed)
@@ -314,8 +312,14 @@ class RentalInspectionViewSet(ModelViewSet):
         return queryset
 
     def perform_update(self, serializer):
-        if serializer.instance.inspection_type == RentalInspection.Type.PRE_RENTAL and not self.request.user.has_acl("maintenance.manage"):
-            raise PermissionDenied("A inspeção pré-locação é registrada pela equipe de manutenção.")
+        if serializer.instance.inspection_type == RentalInspection.Type.PRE_RENTAL:
+            if not self.request.user.has_acl("maintenance.manage"):
+                raise PermissionDenied("A inspeção pré-locação é registrada pela equipe de manutenção.")
+        elif not (
+            self.request.user.has_acl("maintenance.manage")
+            or self.request.user.has_acl("maintenance.view") and self.request.user.has_acl("rentals.inspect")
+        ):
+            raise PermissionDenied("A inspeção final exige acesso à Manutenção e permissão para inspecionar devoluções.")
         inspection = serializer.save()
         AuditLog.objects.create(
             user=self.request.user,
