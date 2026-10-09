@@ -2,6 +2,7 @@ desktop.ini
 **/desktop.ini
 /.env
 /tmp/
+/backups/
 
 # Python / Django
 api/.venv/

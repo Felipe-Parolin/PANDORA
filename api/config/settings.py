@@ -1,5 +1,6 @@
 import os
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,6 +28,7 @@ INSTALLED_APPS = [
     "assets",
     "maintenance",
     "rentals",
+    "logistics",
 ]
 
 MIDDLEWARE = [
@@ -86,6 +88,14 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CORS_ALLOWED_ORIGINS = [x.strip() for x in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://127.0.0.1:5173")
+FREIGHT_ORIGIN_PROVISIONAL = not bool(os.getenv("FREIGHT_ORIGIN_CEP", "").strip())
+FREIGHT_ORIGIN_CEP = os.getenv("FREIGHT_ORIGIN_CEP", "").strip() or "13610050"
+FREIGHT_ORIGIN_LABEL = os.getenv("FREIGHT_ORIGIN_LABEL", "").strip() or (
+    "Centro de Leme/SP (origem provisória)" if FREIGHT_ORIGIN_PROVISIONAL else "CEP de origem configurado"
+)
+FREIGHT_MINIMUM_PER_LEG = Decimal(os.getenv("FREIGHT_MINIMUM_PER_LEG", "25.00"))
+FREIGHT_RATE_PER_KM = Decimal(os.getenv("FREIGHT_RATE_PER_KM", "3.00"))
+FREIGHT_ROAD_FACTOR = Decimal(os.getenv("FREIGHT_ROAD_FACTOR", "1.30"))
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ("rest_framework_simplejwt.authentication.JWTAuthentication",),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),

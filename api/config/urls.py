@@ -7,10 +7,11 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from accounts.views import AccessGroupViewSet, CurrentUserView, EmailTokenObtainPairView, UserViewSet
 from assets.views import CategoryViewSet, EquipmentViewSet, MediaAssetViewSet
-from core.views import DashboardView, HealthView
+from core.views import DashboardView, HealthView, NotificationViewSet
 from customers.views import CustomerViewSet
 from maintenance.views import MaintenancePlanViewSet, ServiceOrderViewSet
-from rentals.views import RentalQuoteViewSet
+from logistics.views import TransportTaskViewSet, VehicleViewSet
+from rentals.views import RentalInspectionViewSet, RentalQuoteViewSet
 
 router = DefaultRouter()
 router.register("users", UserViewSet, basename="user")
@@ -22,6 +23,10 @@ router.register("media", MediaAssetViewSet, basename="media")
 router.register("maintenance-plans", MaintenancePlanViewSet, basename="maintenance-plan")
 router.register("service-orders", ServiceOrderViewSet, basename="service-order")
 router.register("rental-quotes", RentalQuoteViewSet, basename="rental-quote")
+router.register("rental-inspections", RentalInspectionViewSet, basename="rental-inspection")
+router.register("vehicles", VehicleViewSet, basename="vehicle")
+router.register("transport-tasks", TransportTaskViewSet, basename="transport-task")
+router.register("notifications", NotificationViewSet, basename="notification")
 
 urlpatterns = [
     path("admin/", admin.site.urls),

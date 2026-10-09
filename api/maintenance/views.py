@@ -1,12 +1,15 @@
 from django.db.models import Q
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.permissions import ACLPermission
+from rentals.services import refresh_equipment_status
 from .models import MaintenancePlan, ServiceOrder
 from .patterns import MaintenanceKitFactory
 from .serializers import MaintenancePlanSerializer, ServiceOrderSerializer
+from .services import generate_due_preventive_orders
 
 
 class MaintenancePlanViewSet(ModelViewSet):
@@ -16,6 +19,19 @@ class MaintenancePlanViewSet(ModelViewSet):
     acl_view = "maintenance.view"
     acl_manage = "maintenance.manage"
 
+    @action(detail=False, methods=["post"], url_path="sync-due")
+    def sync_due(self, request):
+        created = generate_due_preventive_orders()
+        return Response({"created": len(created), "order_ids": [order.pk for order in created]})
+
+    def perform_create(self, serializer):
+        serializer.save()
+        generate_due_preventive_orders()
+
+    def perform_update(self, serializer):
+        serializer.save()
+        generate_due_preventive_orders()
+
     def get_queryset(self):
         queryset = super().get_queryset()
         if self.request.query_params.get("equipment"):
@@ -24,11 +40,22 @@ class MaintenancePlanViewSet(ModelViewSet):
 
 
 class ServiceOrderViewSet(ModelViewSet):
-    queryset = ServiceOrder.objects.select_related("equipment", "plan", "opened_by", "technician").prefetch_related("activities")
+    queryset = ServiceOrder.objects.select_related("equipment", "plan", "opened_by", "technician", "rental_inspection__quote__customer").prefetch_related("activities")
     serializer_class = ServiceOrderSerializer
     permission_classes = [ACLPermission]
     acl_view = "maintenance.view"
     acl_manage = "maintenance.manage"
+
+    def perform_create(self, serializer):
+        order = serializer.save()
+        refresh_equipment_status(order.equipment)
+
+    def perform_update(self, serializer):
+        previous_equipment = serializer.instance.equipment
+        order = serializer.save()
+        refresh_equipment_status(previous_equipment)
+        if order.equipment_id != previous_equipment.pk:
+            refresh_equipment_status(order.equipment)
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -55,3 +82,14 @@ class ServiceOrderViewSet(ModelViewSet):
     def checklist_template(self, request):
         kit = MaintenanceKitFactory.create(request.query_params.get("type", ServiceOrder.Type.CORRECTIVE))
         return Response({"checklist": kit.checklist, "route": kit.route})
+
+    def destroy(self, request, *args, **kwargs):
+        order = self.get_object()
+        if order.rental_inspection_id:
+            return Response({"detail": "Chamados vinculados a locações não podem ser excluídos."}, status=status.HTTP_409_CONFLICT)
+        if order.plan_due_date:
+            return Response({"detail": "OS geradas por um plano periódico não podem ser excluídas. Ajuste o plano ou cancele o chamado."}, status=status.HTTP_409_CONFLICT)
+        equipment = order.equipment
+        response = super().destroy(request, *args, **kwargs)
+        refresh_equipment_status(equipment)
+        return response

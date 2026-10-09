@@ -13,6 +13,8 @@ class EquipmentCategory(models.Model):
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True)
     default_daily_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    pre_rental_checklist = models.JSONField(default=list, blank=True)
+    return_checklist = models.JSONField(default=list, blank=True)
 
     class Meta:
         verbose_name_plural = "equipment categories"
@@ -68,6 +70,7 @@ class MediaAsset(models.Model):
     equipment = models.ForeignKey(Equipment, on_delete=models.CASCADE, related_name="media", null=True, blank=True)
     service_order = models.ForeignKey("maintenance.ServiceOrder", on_delete=models.CASCADE, related_name="media", null=True, blank=True)
     rental_quote = models.ForeignKey("rentals.RentalQuote", on_delete=models.CASCADE, related_name="media", null=True, blank=True)
+    rental_inspection = models.ForeignKey("rentals.RentalInspection", on_delete=models.CASCADE, related_name="media", null=True, blank=True)
     uploaded_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="uploaded_media")
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -32,6 +32,14 @@ export async function login(email, password) {
   localStorage.setItem('pandora_user', JSON.stringify(data.user))
 }
 
+export async function refreshCurrentUser() {
+  if (!auth.token) return null
+  const { data } = await api.get('/auth/me/')
+  auth.user = data
+  localStorage.setItem('pandora_user', JSON.stringify(data))
+  return data
+}
+
 export function logout() {
   auth.user = null
   auth.token = null
@@ -43,6 +51,7 @@ export function logout() {
 
 export const rows = (data) => data?.results || data || []
 export const can = (permission) => Boolean(auth.user?.permissions?.includes('*') || auth.user?.permissions?.includes(permission))
+export const canAny = (permissions) => (Array.isArray(permissions) ? permissions : [permissions]).some(can)
 export const money = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value || 0))
 export const shortDate = (value) => value ? new Intl.DateTimeFormat('pt-BR').format(new Date(`${value}T12:00:00`)) : '—'
 export const apiError = (error) => {
