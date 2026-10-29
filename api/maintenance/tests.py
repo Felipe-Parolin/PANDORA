@@ -113,6 +113,51 @@ class PatternTests(TestCase):
         order.refresh_from_db()
         self.assertEqual(order.priority, "ALTA")
 
+    def test_workshop_condition_persists_and_broken_equipment_requires_repair(self):
+        scheduled = timezone.now() + timedelta(days=1)
+        order = ServiceOrder.objects.create(equipment=self.equipment, symptoms="Não liga", maintenance_type="CORRECTIVE", opened_by=self.user, priority="ALTA", scheduled_at=scheduled)
+        client = APIClient()
+        client.force_authenticate(self.user)
+        url = f"/api/service-orders/{order.pk}/"
+        broken = client.patch(url, {"equipment_condition": "BROKEN", "diagnosis": "Falha no cabo de alimentação.", "status": "IN_PROGRESS", "technician": self.user.pk}, format="json")
+        self.assertEqual(broken.status_code, 200, broken.data)
+        self.assertEqual(client.get(url).data["operational_status"], "BROKEN")
+        self.equipment.refresh_from_db()
+        self.assertEqual(self.equipment.status, Equipment.Status.MAINTENANCE)
+        for payload in ({"status": "COMPLETED"}, {"status": "CANCELLED"}, {"released": True}):
+            self.assertEqual(client.patch(url, payload, format="json").status_code, 400)
+        self.assertEqual(client.delete(url).status_code, 409)
+        assessment = client.patch(url, {"equipment_condition": "OPERATING", "diagnosis": "Cabo substituído e funcionamento verificado."}, format="json")
+        self.assertEqual(assessment.status_code, 200, assessment.data)
+        order.refresh_from_db()
+        self.assertEqual(order.status, ServiceOrder.Status.IN_PROGRESS)
+        self.assertFalse(order.released)
+        self.assertEqual(order.priority, "ALTA")
+        self.assertEqual(order.scheduled_at, scheduled)
+        repaired = client.patch(url, {"equipment_condition": "OPERATING", "status": "COMPLETED", "released": True, "final_tests": "Partida, parada e isolamento verificados."}, format="json")
+        self.assertEqual(repaired.status_code, 200, repaired.data)
+        self.assertEqual(repaired.data["operational_status"], "OPERATING")
+        self.equipment.refresh_from_db()
+        self.assertEqual(self.equipment.status, Equipment.Status.AVAILABLE)
+
+    def test_new_workshop_assessment_requires_condition_tests_and_release_permission(self):
+        from accounts.models import AccessGroup
+
+        order = ServiceOrder.objects.create(equipment=self.equipment, symptoms="Revisão", maintenance_type="PREVENTIVE", opened_by=self.user, technician=self.user)
+        client = APIClient()
+        client.force_authenticate(self.user)
+        url = f"/api/service-orders/{order.pk}/"
+        pending = client.patch(url, {"equipment_condition": "PENDING", "status": "COMPLETED", "released": True}, format="json")
+        self.assertEqual(pending.status_code, 400)
+        no_tests = client.patch(url, {"equipment_condition": "OPERATING", "status": "COMPLETED", "released": True}, format="json")
+        self.assertEqual(no_tests.status_code, 400)
+        group = AccessGroup.objects.create(name="Atendimento sem liberação", permissions=["maintenance.view", "maintenance.manage"])
+        self.user.access_group = group
+        self.user.save(update_fields=("access_group",))
+        denied = client.patch(url, {"equipment_condition": "OPERATING", "status": "COMPLETED", "released": True, "final_tests": "Funcionamento validado."}, format="json")
+        self.assertEqual(denied.status_code, 400)
+        self.assertIn("released", denied.data)
+
 
 class MaintenanceAlertTests(TestCase):
     def test_critical_usage_limit_triggers_alert(self):

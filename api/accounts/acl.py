@@ -21,6 +21,9 @@ PERMISSION_CATALOG = [
     {"code": "rentals.dispatch", "label": "Registrar entrega de equipamentos", "module": "Locações"},
     {"code": "rentals.extend", "label": "Prorrogar locações", "module": "Locações"},
     {"code": "rentals.return", "label": "Registrar e concluir devoluções", "module": "Locações"},
+    {"code": "fiscal.view", "label": "Consultar preparação fiscal das locações", "module": "Fiscal"},
+    {"code": "fiscal.manage", "label": "Completar dados fiscais de clientes e equipamentos", "module": "Fiscal"},
+    {"code": "fiscal.configure", "label": "Configurar dados fiscais da empresa emitente", "module": "Fiscal"},
 ]
 
 VALID_PERMISSIONS = {item["code"] for item in PERMISSION_CATALOG}

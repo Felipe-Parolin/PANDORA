@@ -192,6 +192,80 @@ class RentalRulesTests(TestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("discount_percent", serializer.errors)
 
+    @patch("rentals.freight.estimate_freight", return_value={"fee": "25.00", "distance_km": "1.0", "origin_label": "Depósito de teste"})
+    @patch("rentals.freight.lookup_cep", return_value={"cep": "13610050"})
+    def test_automatic_transport_shares_address_and_prices_each_leg(self, lookup, estimate):
+        response = self.client.post("/api/rental-quotes/", {
+            "customer": self.customer.pk, "start_date": str(timezone.localdate()), "end_date": str(timezone.localdate()),
+            "items": [{"equipment_id": self.equipment.pk, "daily_rate": "100.00", "quantity_days": 1}],
+            "delivery_transport_required": True, "return_transport_required": True,
+            "delivery_address": "Rua A, 10, Leme/SP", "delivery_complement": "Portão 2", "delivery_cep": "13610050",
+            "return_same_as_delivery": True, "calculate_transport": True,
+            "transport_fee": "1.00", "discount_percent": "10.00",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        quote = RentalQuote.objects.get(pk=response.data["id"])
+        self.assertFalse(quote.inspections.exists())
+        self.assertFalse(quote.transport_tasks.exists())
+        self.assertIsNone(quote.reserved_at)
+        self.equipment.refresh_from_db()
+        self.assertEqual(self.equipment.status, Equipment.Status.AVAILABLE)
+        self.assertEqual(quote.return_address, quote.delivery_address)
+        self.assertEqual(quote.return_complement, "Portão 2")
+        self.assertEqual(quote.return_cep, "13610050")
+        self.assertEqual(quote.transport_fee, Decimal("50.00"))
+        self.assertEqual(quote.discount, Decimal("15.00"))
+        self.assertEqual(quote.total, Decimal("135.00"))
+        self.assertEqual(quote.transport_estimate["return"]["fee"], "25.00")
+        lookup.assert_called_once_with("13610050")
+        estimate.assert_called_once()
+        # Removing a leg must not leave the previous combined charge behind.
+        changed = self.client.patch(f"/api/rental-quotes/{quote.pk}/", {"return_transport_required": False}, format="json")
+        self.assertEqual(changed.status_code, 200, changed.data)
+        self.assertEqual(Decimal(changed.data["transport_fee"]), Decimal("25.00"))
+        self.assertEqual(Decimal(changed.data["total"]), Decimal("112.50"))
+        removed = self.client.patch(f"/api/rental-quotes/{quote.pk}/", {"delivery_transport_required": False}, format="json")
+        self.assertEqual(removed.status_code, 200, removed.data)
+        self.assertEqual(Decimal(removed.data["transport_fee"]), Decimal("0.00"))
+        # Commercial conditions are no longer a required input.
+        approved = self.client.post(f"/api/rental-quotes/{quote.pk}/reserve/")
+        self.assertEqual(approved.status_code, 200, approved.data)
+        immutable = self.client.patch(f"/api/rental-quotes/{quote.pk}/", {"calculate_transport": True}, format="json")
+        self.assertEqual(immutable.status_code, 400)
+
+    @patch("rentals.freight.estimate_freight", side_effect=[{"fee": "25.00"}, {"fee": "40.00"}])
+    @patch("rentals.freight.lookup_cep", side_effect=lambda cep: {"cep": cep})
+    def test_automatic_transport_prices_different_addresses(self, lookup, estimate):
+        quote = self.create_quote()
+        response = self.client.patch(f"/api/rental-quotes/{quote.pk}/", {
+            "delivery_transport_required": True, "return_transport_required": True,
+            "delivery_address": "Rua A, 10", "return_address": "Rua B, 20",
+            "delivery_cep": "13610050", "return_cep": "13617060", "calculate_transport": True,
+        }, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(Decimal(response.data["transport_fee"]), Decimal("65.00"))
+        self.assertEqual(response.data["transport_estimate"]["return"]["fee"], "40.00")
+        self.assertEqual(lookup.call_count, 2)
+        with patch("rentals.serializers.estimate_quote_transport", side_effect=AssertionError("Unchanged freight must be preserved")):
+            unchanged = self.client.patch(f"/api/rental-quotes/{quote.pk}/", {"notes": "Histórico preservado"}, format="json")
+        self.assertEqual(unchanged.status_code, 200, unchanged.data)
+
+    @patch("rentals.freight.estimate_freight", return_value={"fee": None, "reason": "CEP sem coordenadas."})
+    @patch("rentals.freight.lookup_cep", return_value={"cep": "13610050"})
+    def test_automatic_transport_never_silently_saves_an_unpriced_leg(self, lookup, estimate):
+        quote = self.create_quote()
+        payload = {"delivery_transport_required": True, "delivery_address": "Rua A, 10", "calculate_transport": True}
+        missing = self.client.patch(f"/api/rental-quotes/{quote.pk}/", payload, format="json")
+        self.assertEqual(missing.status_code, 400)
+        self.assertIn("delivery_cep", missing.data)
+        payload["delivery_cep"] = "13610050"
+        unavailable = self.client.patch(f"/api/rental-quotes/{quote.pk}/", payload, format="json")
+        self.assertEqual(unavailable.status_code, 400)
+        self.assertIn("transport_fee", unavailable.data)
+        quote.refresh_from_db()
+        self.assertFalse(quote.delivery_transport_required)
+        self.assertEqual(quote.transport_estimate, {})
+
     @override_settings(FREIGHT_ORIGIN_CEP="13610050", FREIGHT_ORIGIN_LABEL="Origem de teste", FREIGHT_ORIGIN_PROVISIONAL=False,
                        FREIGHT_MINIMUM_PER_LEG=Decimal("25"), FREIGHT_RATE_PER_KM=Decimal("3"), FREIGHT_ROAD_FACTOR=Decimal("1.3"))
     @patch("rentals.freight.lookup_cep")

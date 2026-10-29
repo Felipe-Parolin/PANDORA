@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.db import transaction
@@ -16,10 +16,11 @@ from customers.models import Customer
 from core.models import AuditLog
 from maintenance.models import ServiceOrder
 from logistics.models import TransportTask
-from logistics.services import ensure_transport_task, transport_completed
+from logistics.services import ensure_transport_task
 from .models import RentalDocument, RentalExtension, RentalInspection, RentalQuote, UnmetRentalDemand
 from .documents import render_document_pdf, snapshot_for, snapshot_hash
 from .freight import estimate_freight, lookup_cep
+from .fulfillment import register_delivery, register_return
 from .serializers import RentalInspectionSerializer, RentalQuoteSerializer
 from .services import availability_reason, ensure_inspections, ensure_pre_rental_orders, ensure_return_orders, refresh_equipment_status
 
@@ -142,8 +143,6 @@ class RentalQuoteViewSet(ModelViewSet):
         quote = RentalQuote.objects.select_for_update().get(pk=self.get_object().pk)
         if quote.status not in {RentalQuote.Status.DRAFT, RentalQuote.Status.SENT}:
             raise ValidationError({"status": "Somente orçamentos em rascunho ou enviados podem ser reservados."})
-        if not quote.conditions.strip():
-            raise ValidationError({"conditions": "Registre as condições antes de reservar."})
         equipment_ids = quote.items.values_list("equipment_id", flat=True)
         equipment = list(Equipment.objects.select_for_update().filter(pk__in=equipment_ids).order_by("pk"))
         conflicts = {item.internal_code: reason for item in equipment if (reason := availability_reason(item, quote.start_date, quote.end_date, quote))}
@@ -194,49 +193,7 @@ class RentalQuoteViewSet(ModelViewSet):
     @action(detail=True, methods=["post"])
     def deliver(self, request, pk=None):
         self._require_acl(request, "rentals.dispatch")
-        quote = RentalQuote.objects.select_for_update().get(pk=self.get_object().pk)
-        if quote.status != RentalQuote.Status.APPROVED:
-            raise ValidationError({"status": "A entrega exige uma reserva aprovada."})
-        current_equipment_ids = quote.items.values_list("equipment_id", flat=True)
-        inspections = list(quote.inspections.filter(
-            inspection_type=RentalInspection.Type.PRE_RENTAL, equipment_id__in=current_equipment_ids
-        ).select_related("equipment"))
-        if len(inspections) != quote.items.count() or any(item.result == RentalInspection.Result.PENDING for item in inspections):
-            raise ValidationError({"inspections": "Conclua a inspeção pré-locação de todos os equipamentos."})
-        blocked = [item.equipment.internal_code for item in inspections if item.result == RentalInspection.Result.BLOCKED or item.critical_impediment]
-        if blocked:
-            raise ValidationError({"inspections": f"Equipamentos impedidos na inspeção: {', '.join(blocked)}."})
-        unfinished = [item.equipment.internal_code for item in inspections if not ServiceOrder.objects.filter(
-            rental_inspection=item, status=ServiceOrder.Status.COMPLETED, released=True
-        ).exists()]
-        if unfinished:
-            raise ValidationError({"inspections": f"A inspeção na manutenção ainda não liberou: {', '.join(unfinished)}."})
-        if quote.delivery_transport_required and not transport_completed(quote, TransportTask.Leg.DELIVERY):
-            raise ValidationError({"transport": "Conclua a viagem de entrega antes de registrar a locação como entregue."})
-        equipment_ids = quote.items.values_list("equipment_id", flat=True)
-        equipment = list(Equipment.objects.select_for_update().filter(pk__in=equipment_ids).order_by("pk"))
-        conflicts = {item.internal_code: reason for item in equipment if (reason := availability_reason(item, quote.start_date, quote.end_date, quote))}
-        if conflicts:
-            raise ValidationError({"availability": conflicts})
-        delivered_at = request.data.get("delivered_at")
-        try:
-            delivery_time = datetime.fromisoformat(delivered_at) if delivered_at else timezone.now()
-            if timezone.is_naive(delivery_time):
-                delivery_time = timezone.make_aware(delivery_time)
-        except (TypeError, ValueError):
-            raise ValidationError({"delivered_at": "Informe uma data e hora válidas."})
-        quote.status = RentalQuote.Status.ACTIVE
-        quote.delivered_by = request.user
-        quote.delivered_at = delivery_time
-        quote.delivery_conditions = str(request.data.get("conditions", "")).strip()
-        quote.save(update_fields=("status", "delivered_by", "delivered_at", "delivery_conditions", "updated_at"))
-        ensure_transport_task(quote, TransportTask.Leg.RETURN, request.user)
-        for inspection in inspections:
-            line = quote.items.get(equipment=inspection.equipment)
-            line.condition_out = f"{inspection.get_condition_display()}. {inspection.observations}".strip()
-            line.save(update_fields=("condition_out",))
-            refresh_equipment_status(inspection.equipment)
-        self._audit(request, quote, "DELIVERED", delivered_at=delivery_time.isoformat(), conditions=quote.delivery_conditions)
+        quote = register_delivery(self.get_object().pk, request.user, request.data.get("delivered_at"), request.data.get("conditions", ""))
         return Response(self.get_serializer(quote).data)
 
     @transaction.atomic
@@ -283,28 +240,7 @@ class RentalQuoteViewSet(ModelViewSet):
     @action(detail=True, methods=["post"], url_path="return")
     def return_rental(self, request, pk=None):
         self._require_acl(request, "rentals.return")
-        quote = RentalQuote.objects.select_for_update().get(pk=self.get_object().pk)
-        if quote.status != RentalQuote.Status.ACTIVE:
-            raise ValidationError({"status": "Somente locações entregues podem ser devolvidas."})
-        if quote.return_transport_required and not transport_completed(quote, TransportTask.Leg.RETURN):
-            raise ValidationError({"transport": "Conclua a coleta de devolução antes de registrar o retorno."})
-        returned_at = request.data.get("returned_at")
-        try:
-            return_time = datetime.fromisoformat(returned_at) if returned_at else timezone.now()
-            if timezone.is_naive(return_time):
-                return_time = timezone.make_aware(return_time)
-        except (TypeError, ValueError):
-            raise ValidationError({"returned_at": "Informe uma data e hora válidas."})
-        quote.status = RentalQuote.Status.RETURNED
-        quote.returned_by = request.user
-        quote.returned_at = return_time
-        quote.return_conditions = str(request.data.get("conditions", "")).strip()
-        quote.save(update_fields=("status", "returned_by", "returned_at", "return_conditions", "updated_at"))
-        ensure_inspections(quote, RentalInspection.Type.RETURN)
-        ensure_return_orders(quote, request.user)
-        for line in quote.items.select_related("equipment"):
-            refresh_equipment_status(line.equipment)
-        self._audit(request, quote, "RETURNED", returned_at=return_time.isoformat(), conditions=quote.return_conditions)
+        quote = register_return(self.get_object().pk, request.user, request.data.get("returned_at"), request.data.get("conditions", ""))
         return Response(self.get_serializer(quote).data)
 
     @transaction.atomic

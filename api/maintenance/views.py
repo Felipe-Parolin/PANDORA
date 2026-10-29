@@ -85,6 +85,8 @@ class ServiceOrderViewSet(ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         order = self.get_object()
+        if order.equipment_condition == ServiceOrder.EquipmentCondition.BROKEN:
+            return Response({"detail": "Há uma falha confirmada. Mantenha a OS para registrar o reparo e a liberação."}, status=status.HTTP_409_CONFLICT)
         if order.rental_inspection_id:
             return Response({"detail": "Chamados vinculados a locações não podem ser excluídos."}, status=status.HTTP_409_CONFLICT)
         if order.plan_due_date:

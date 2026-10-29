@@ -5,7 +5,8 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from accounts.models import User
+from accounts.models import AccessGroup, User
+from maintenance.models import ServiceOrder
 from assets.models import Equipment, EquipmentCategory
 from customers.models import Customer
 from rentals.models import RentalInspection, RentalItem, RentalQuote
@@ -95,6 +96,68 @@ class TransportFlowTests(TestCase):
         response = self.client.post(f"/api/rental-quotes/{self.quote.pk}/reserve/")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertFalse(TransportTask.objects.filter(quote=self.quote).exists())
+
+    def test_integrated_delivery_and_collection_advance_the_rental(self):
+        self.client.post(f"/api/rental-quotes/{self.quote.pk}/reserve/")
+        outbound = TransportTask.objects.get(quote=self.quote, leg=TransportTask.Leg.DELIVERY)
+        detail = self.client.get(f"/api/transport-tasks/{outbound.pk}/")
+        self.assertEqual(detail.data["workflow"]["code"], "BLOCKED")
+        self.assertFalse(detail.data["workflow"]["can_start"])
+        self.assertEqual(detail.data["equipment"][0]["code"], self.equipment.internal_code)
+        when = timezone.now().isoformat()
+        self.client.patch(f"/api/transport-tasks/{outbound.pk}/", {"vehicle": self.vehicle.pk, "driver": self.sales.pk, "scheduled_at": when}, format="json")
+        self.client.force_authenticate(self.technician)
+        inspection = self.quote.inspections.get(inspection_type=RentalInspection.Type.PRE_RENTAL)
+        evaluated = self.client.patch(f"/api/rental-inspections/{inspection.pk}/", {"equipment_decision": "OPERATING"}, format="json")
+        self.assertEqual(evaluated.status_code, 200, evaluated.data)
+        self.client.force_authenticate(self.sales)
+        ready = self.client.get(f"/api/transport-tasks/{outbound.pk}/")
+        self.assertTrue(ready.data["workflow"]["can_start"])
+        self.assertEqual(self.client.post(f"/api/transport-tasks/{outbound.pk}/start/").status_code, 200)
+        delivered = self.client.post(f"/api/transport-tasks/{outbound.pk}/complete/", {"advance_rental": True}, format="json")
+        self.assertEqual(delivered.status_code, 200, delivered.data)
+        self.assertEqual(delivered.data["quote_status"], RentalQuote.Status.ACTIVE)
+        inbound = self.quote.transport_tasks.get(leg=TransportTask.Leg.RETURN)
+        self.client.patch(f"/api/transport-tasks/{inbound.pk}/", {"vehicle": self.vehicle.pk, "driver": self.sales.pk, "scheduled_at": when}, format="json")
+        self.assertEqual(self.client.post(f"/api/transport-tasks/{inbound.pk}/start/").status_code, 200)
+        returned = self.client.post(f"/api/transport-tasks/{inbound.pk}/complete/", {"advance_rental": True}, format="json")
+        self.assertEqual(returned.status_code, 200, returned.data)
+        self.assertEqual(returned.data["quote_status"], RentalQuote.Status.RETURNED)
+        final = self.quote.inspections.get(inspection_type=RentalInspection.Type.RETURN)
+        self.assertTrue(ServiceOrder.objects.filter(rental_inspection=final, maintenance_type=ServiceOrder.Type.POST_RENTAL).exists())
+        self.equipment.refresh_from_db()
+        self.assertNotEqual(self.equipment.status, Equipment.Status.AVAILABLE)
+
+    def test_integrated_confirmation_cannot_bypass_rental_permissions(self):
+        self.client.post(f"/api/rental-quotes/{self.quote.pk}/reserve/")
+        trip = self.quote.transport_tasks.get(leg=TransportTask.Leg.DELIVERY)
+        trip.status = TransportTask.Status.IN_TRANSIT
+        trip.save(update_fields=("status",))
+        group = AccessGroup.objects.create(name="Somente transporte", permissions=["logistics.view", "logistics.manage"])
+        operator = User.objects.create_user("driver-only@example.com", "test-password", full_name="Operador", access_group=group)
+        self.client.force_authenticate(operator)
+        denied = self.client.post(f"/api/transport-tasks/{trip.pk}/complete/", {"advance_rental": True}, format="json")
+        self.assertEqual(denied.status_code, 403)
+        trip.refresh_from_db()
+        self.assertEqual(trip.status, TransportTask.Status.IN_TRANSIT)
+        completed = self.client.post(f"/api/transport-tasks/{trip.pk}/complete/", {"advance_rental": False}, format="json")
+        self.assertEqual(completed.status_code, 200, completed.data)
+        self.assertEqual(completed.data["workflow"]["code"], "CONFIRM")
+        drivers = self.client.get("/api/transport-tasks/drivers/")
+        self.assertEqual(drivers.status_code, 200)
+        self.assertEqual(set(drivers.data[0]), {"id", "full_name", "in_transit"})
+
+    def test_driver_cannot_start_two_trips_at_once(self):
+        TransportTask.objects.create(quote=self.quote, leg=TransportTask.Leg.DELIVERY, address="Rua A", driver=self.sales,
+                                     vehicle=self.vehicle, status=TransportTask.Status.IN_TRANSIT, created_by=self.sales)
+        other_quote = RentalQuote.objects.create(customer=self.customer, start_date=self.quote.start_date, end_date=self.quote.end_date,
+                                                 status=RentalQuote.Status.ACTIVE, created_by=self.sales)
+        other_vehicle = Vehicle.objects.create(plate="DEF2G34", brand="Fiat", model="Strada")
+        other_trip = TransportTask.objects.create(quote=other_quote, leg=TransportTask.Leg.RETURN, address="Rua B", driver=self.sales,
+                                                 vehicle=other_vehicle, scheduled_at=timezone.now(), created_by=self.sales)
+        blocked = self.client.post(f"/api/transport-tasks/{other_trip.pk}/start/")
+        self.assertEqual(blocked.status_code, 400)
+        self.assertIn("driver", blocked.data)
 
     def test_vehicle_validation_and_history(self):
         response = self.client.post("/api/vehicles/", {"plate": "invalid", "brand": "A", "model": "B"})

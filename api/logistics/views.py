@@ -3,16 +3,19 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework import serializers
 from rest_framework.mixins import ListModelMixin, RetrieveModelMixin, UpdateModelMixin
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet, ModelViewSet
 
 from accounts.permissions import ACLPermission
+from accounts.models import User
 from core.models import AuditLog
 from maintenance.models import ServiceOrder
 from rentals.models import RentalInspection, RentalQuote
 from rentals.services import availability_reason
+from rentals.fulfillment import register_delivery, register_return
 
 from .models import TransportTask, Vehicle
 from .serializers import TransportTaskSerializer, VehicleSerializer
@@ -32,11 +35,21 @@ class VehicleViewSet(ModelViewSet):
 
 
 class TransportTaskViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin, GenericViewSet):
-    queryset = TransportTask.objects.select_related("quote__customer", "vehicle", "driver", "created_by")
+    queryset = TransportTask.objects.select_related("quote__customer", "vehicle", "driver", "created_by").prefetch_related(
+        "quote__items__equipment", "quote__inspections__service_order",
+    )
     serializer_class = TransportTaskSerializer
     permission_classes = [ACLPermission]
     acl_view = "logistics.view"
     acl_manage = "logistics.manage"
+
+    @action(detail=False, methods=["get"])
+    def drivers(self, request):
+        if not request.user.has_acl("logistics.manage"):
+            raise PermissionDenied("Seu grupo não pode planejar viagens.")
+        return Response([{"id": user.id, "full_name": user.full_name,
+                          "in_transit": user.driving_tasks.filter(status=TransportTask.Status.IN_TRANSIT).exists()}
+                         for user in User.objects.filter(is_active=True).order_by("full_name")])
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -62,8 +75,11 @@ class TransportTaskViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin,
             vehicle=vehicle, status=TransportTask.Status.IN_TRANSIT
         ).exclude(pk=task.pk).exists():
             raise ValidationError({"vehicle": "Veículo indisponível ou em outra viagem."})
-        if not task.driver.is_active:
+        driver = User.objects.select_for_update().get(pk=task.driver_id)
+        if not driver.is_active:
             raise ValidationError({"driver": "O motorista precisa estar ativo."})
+        if TransportTask.objects.filter(driver=driver, status=TransportTask.Status.IN_TRANSIT).exclude(pk=task.pk).exists():
+            raise ValidationError({"driver": "O motorista já está em outra viagem."})
         quote = RentalQuote.objects.select_for_update().get(pk=task.quote_id)
         required_status = RentalQuote.Status.APPROVED if task.leg == TransportTask.Leg.DELIVERY else RentalQuote.Status.ACTIVE
         if quote.status != required_status:
@@ -72,6 +88,7 @@ class TransportTaskViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin,
             inspections = list(quote.inspections.filter(inspection_type=RentalInspection.Type.PRE_RENTAL))
             if len(inspections) != quote.items.count() or any(
                 inspection.result not in {RentalInspection.Result.APPROVED, RentalInspection.Result.APPROVED_WITH_NOTES}
+                or inspection.critical_impediment
                 or not ServiceOrder.objects.filter(
                     rental_inspection=inspection, status=ServiceOrder.Status.COMPLETED, released=True
                 ).exists()
@@ -94,6 +111,7 @@ class TransportTaskViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin,
     @transaction.atomic
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
+        advance_rental = serializers.BooleanField().run_validation(request.data.get("advance_rental", False))
         task = TransportTask.objects.select_for_update().get(pk=self.get_object().pk)
         if task.status != TransportTask.Status.IN_TRANSIT:
             raise ValidationError({"status": "Somente viagens em transporte podem ser concluídas."})
@@ -101,4 +119,8 @@ class TransportTaskViewSet(ListModelMixin, RetrieveModelMixin, UpdateModelMixin,
         task.completed_at = timezone.now()
         task.save(update_fields=("status", "completed_at"))
         AuditLog.objects.create(user=request.user, entity="TransportTask", record_id=str(task.pk), action="COMPLETED", data={"quote": task.quote.number, "leg": task.leg})
+        if advance_rental:
+            register = register_delivery if task.leg == TransportTask.Leg.DELIVERY else register_return
+            register(task.quote_id, request.user, task.completed_at)
+            task.quote.refresh_from_db()
         return Response(self.get_serializer(task).data)

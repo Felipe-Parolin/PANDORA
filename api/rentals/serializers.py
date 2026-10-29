@@ -11,6 +11,7 @@ from logistics.services import ensure_transport_task
 from logistics.models import TransportTask
 from .models import RentalExtension, RentalInspection, RentalItem, RentalQuote
 from .adapters import InspectionDecisionAdapter
+from .freight import estimate_quote_transport
 from .services import availability_reason, ensure_inspections, ensure_pre_rental_orders, refresh_equipment_status
 
 
@@ -137,6 +138,8 @@ class RentalExtensionSerializer(serializers.ModelSerializer):
 
 
 class RentalQuoteSerializer(serializers.ModelSerializer):
+    calculate_transport = serializers.BooleanField(write_only=True, required=False)
+    return_same_as_delivery = serializers.BooleanField(write_only=True, required=False)
     customer_name = serializers.CharField(source="customer.name", read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     created_by_name = serializers.CharField(source="created_by.full_name", read_only=True)
@@ -152,7 +155,7 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
         model = RentalQuote
         fields = "__all__"
         read_only_fields = (
-            "number", "public_id", "created_by", "subtotal", "total", "created_at", "updated_at",
+            "number", "public_id", "created_by", "subtotal", "total", "transport_estimate", "created_at", "updated_at",
             "reserved_by", "reserved_at", "delivered_by", "delivered_at", "delivery_conditions",
             "returned_by", "returned_at", "return_conditions", "cancelled_by", "cancelled_at",
         )
@@ -184,10 +187,29 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
             key in attrs for key in (
                 "items", "customer", "start_date", "end_date", "status", "delivery_transport_required",
                 "return_transport_required", "delivery_address", "return_address", "delivery_complement", "return_complement",
-                "delivery_cep", "return_cep", "transport_fee",
+                "delivery_cep", "return_cep", "transport_fee", "calculate_transport", "return_same_as_delivery",
             )
         ):
             raise serializers.ValidationError("A reserva aprovada não pode trocar cliente, equipamentos ou período. Cancele e gere outro orçamento.")
+        calculate_transport = attrs.pop("calculate_transport", False)
+        same_address = attrs.pop("return_same_as_delivery", False)
+        delivery_required = attrs.get("delivery_transport_required", getattr(self.instance, "delivery_transport_required", False))
+        return_required = attrs.get("return_transport_required", getattr(self.instance, "return_transport_required", False))
+        if same_address:
+            if not (delivery_required and return_required):
+                raise serializers.ValidationError({"return_same_as_delivery": "Selecione entrega e coleta para compartilhar o endereço."})
+            for suffix in ("address", "cep", "complement"):
+                attrs[f"return_{suffix}"] = attrs.get(f"delivery_{suffix}", getattr(self.instance, f"delivery_{suffix}", ""))
+        transport_changed = any(key in attrs and attrs[key] != getattr(self.instance, key, None) for key in (
+            "delivery_transport_required", "return_transport_required", "delivery_cep", "return_cep",
+            "delivery_address", "return_address", "transport_fee",
+        ))
+        if calculate_transport or (transport_changed and getattr(self.instance, "transport_estimate", {})):
+            attrs["transport_estimate"] = estimate_quote_transport(
+                attrs.get("delivery_cep", getattr(self.instance, "delivery_cep", "")) if delivery_required else None,
+                attrs.get("return_cep", getattr(self.instance, "return_cep", "")) if return_required else None,
+            )
+            attrs["transport_fee"] = Decimal(attrs["transport_estimate"]["total"])
         if not self.instance and not items:
             raise serializers.ValidationError({"items": "Inclua pelo menos um equipamento."})
         effective_items = items if items is not None else ([{"equipment": item.equipment, "daily_rate": item.daily_rate} for item in self.instance.items.all()] if self.instance else [])
@@ -235,9 +257,6 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
                     conflicts[equipment.internal_code] = reason
             if conflicts:
                 raise serializers.ValidationError({"availability": conflicts})
-            conditions = attrs.get("conditions", getattr(self.instance, "conditions", ""))
-            if not conditions.strip():
-                raise serializers.ValidationError({"conditions": "Registre as condições da reserva."})
         return attrs
 
     @transaction.atomic
@@ -245,7 +264,8 @@ class RentalQuoteSerializer(serializers.ModelSerializer):
         items = validated_data.pop("items")
         quote = RentalQuote.objects.create(created_by=self.context["request"].user, **validated_data)
         self._replace_items(quote, items)
-        self._sync_reservation(quote)
+        if quote.status == RentalQuote.Status.APPROVED:
+            self._sync_reservation(quote)
         return quote
 
     @transaction.atomic

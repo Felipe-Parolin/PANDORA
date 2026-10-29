@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { CheckCircle2, Save, ShieldAlert, Wrench } from 'lucide-vue-next'
+import { CheckCircle2, Save, ShieldAlert } from 'lucide-vue-next'
+import EquipmentConditionChoice from './EquipmentConditionChoice.vue'
 import ModalDialog from './ModalDialog.vue'
 import StatusBadge from './StatusBadge.vue'
 import { api, apiError, can, rows } from '../services/api'
@@ -41,7 +42,7 @@ function choose(value) {
 
 async function save() {
   if (!selected.value) return
-  if (!decision.value) { error.value = 'Selecione se o equipamento está operante ou quebrado.'; return }
+  if (!decision.value) { error.value = 'Selecione se o equipamento está operante ou inoperante.'; return }
   if (decision.value === 'BROKEN' && !selected.value.observations?.trim()) { error.value = 'Descreva o problema para encaminhar o equipamento ao reparo.'; return }
   busy.value = true
   error.value = ''
@@ -65,14 +66,14 @@ onMounted(load)
 <template>
   <ModalDialog :title="`${title} · ${quote.number}`" wide @close="emit('close')">
     <div class="inspection-progress"><div><span class="eyebrow">EQUIPAMENTOS AVALIADOS</span><strong>{{ completed }} de {{ inspections.length }}</strong></div><div class="progress-track"><i :style="{ width: `${inspections.length ? completed / inspections.length * 100 : 0}%` }" /></div></div>
-    <div class="inspection-flow-hint"><ShieldAlert :size="18" /><span>{{ type === 'PRE_RENTAL' ? 'Confirme a condição do equipamento antes da entrega. Se estiver quebrado, a locação fica bloqueada até o reparo.' : 'Registre a condição na devolução. Um equipamento quebrado permanece indisponível e segue para reparo.' }}</span></div>
+    <div class="inspection-flow-hint"><ShieldAlert :size="18" /><span>{{ type === 'PRE_RENTAL' ? 'Confirme a condição do equipamento antes da entrega. Se estiver inoperante, a locação fica bloqueada até o reparo.' : 'Registre a condição na devolução. Um equipamento inoperante permanece indisponível e segue para reparo.' }}</span></div>
     <div v-if="inspections.length" class="inspection-layout">
-      <nav class="inspection-equipment-list" aria-label="Equipamentos da locação"><button v-for="item in inspections" :key="item.id" :class="{ active: item.id === selected?.id }" @click="selectedId = item.id; error = ''"><span><strong>{{ item.internal_code }}</strong><small>{{ item.equipment_name }}</small></span><StatusBadge :value="item.result" :label="item.result === 'PENDING' ? 'Pendente' : item.result === 'BLOCKED' ? 'Quebrado' : 'Operante'" /></button></nav>
+      <nav class="inspection-equipment-list" aria-label="Equipamentos da locação"><button v-for="item in inspections" :key="item.id" :class="{ active: item.id === selected?.id }" @click="selectedId = item.id; error = ''"><span><strong>{{ item.internal_code }}</strong><small>{{ item.equipment_name }}</small></span><StatusBadge :value="item.result" :label="item.result === 'PENDING' ? 'Pendente' : item.result === 'BLOCKED' ? 'Inoperante' : 'Operante'" /></button></nav>
       <section v-if="selected" class="inspection-editor">
-        <div v-if="type === 'RETURN' && previous" class="comparison-strip"><div><span class="eyebrow">NA SAÍDA</span><strong>{{ previous.result === 'BLOCKED' ? 'Quebrado' : previous.result === 'PENDING' ? 'Pendente' : 'Operante' }}</strong><small>{{ previous.observations || 'Sem observações.' }}</small></div><div><span class="eyebrow">NA DEVOLUÇÃO</span><strong>{{ decision === 'BROKEN' ? 'Quebrado' : decision === 'OPERATING' ? 'Operante' : 'Aguardando avaliação' }}</strong></div></div>
+        <div v-if="type === 'RETURN' && previous" class="comparison-strip"><div><span class="eyebrow">NA SAÍDA</span><strong>{{ previous.result === 'BLOCKED' ? 'Inoperante' : previous.result === 'PENDING' ? 'Pendente' : 'Operante' }}</strong><small>{{ previous.observations || 'Sem observações.' }}</small></div><div><span class="eyebrow">NA DEVOLUÇÃO</span><strong>{{ decision === 'BROKEN' ? 'Inoperante' : decision === 'OPERATING' ? 'Operante' : 'Aguardando avaliação' }}</strong></div></div>
         <header class="inspection-editor-heading"><div><span class="eyebrow">{{ selected.category_name }}</span><h3>{{ selected.internal_code }} · {{ selected.equipment_name }}</h3></div></header>
         <dl class="inspection-equipment-details"><div><dt>Marca e modelo</dt><dd>{{ [selected.equipment_brand, selected.equipment_model].filter(Boolean).join(' · ') || 'Não informado' }}</dd></div><div><dt>Número de série</dt><dd>{{ selected.equipment_serial_number || 'Não informado' }}</dd></div><div><dt>Situação no cadastro</dt><dd>{{ selected.equipment_status_label || 'Não informada' }}</dd></div></dl>
-        <fieldset class="inspection-decision" :disabled="!editable"><legend>O equipamento está em condições de uso?</legend><div class="inspection-decision-options"><button type="button" :class="{ selected: decision === 'OPERATING' }" @click="choose('OPERATING')"><CheckCircle2 :size="22" /><strong>Operante</strong><small>{{ type === 'PRE_RENTAL' ? 'Pode liberar a locação.' : 'Pode voltar a ficar disponível.' }}</small></button><button type="button" class="broken" :class="{ selected: decision === 'BROKEN' }" @click="choose('BROKEN')"><Wrench :size="22" /><strong>Quebrado</strong><small>Bloqueia o uso e encaminha ao reparo.</small></button></div></fieldset>
+        <EquipmentConditionChoice :model-value="decision" :disabled="!editable" :operating-hint="type === 'PRE_RENTAL' ? 'Pode liberar a locação.' : 'Pode voltar a ficar disponível.'" broken-hint="Bloqueia o uso e encaminha ao reparo." @update:model-value="choose" />
         <div class="form-field inspection-observations"><label for="inspection-observations">{{ decision === 'BROKEN' ? 'Qual é o problema? *' : 'Observações (opcional)' }}</label><textarea id="inspection-observations" v-model="selected.observations" :disabled="!editable" rows="3" placeholder="Descreva a condição, avaria ou informação importante." /></div>
         <p v-if="selected.performed_by_name" class="inspection-signature"><CheckCircle2 :size="17" />Última avaliação por <strong>{{ selected.performed_by_name }}</strong></p>
       </section>

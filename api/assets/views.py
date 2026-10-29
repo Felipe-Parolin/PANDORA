@@ -1,9 +1,10 @@
 from io import BytesIO
+from pathlib import Path
 
 import qrcode
 from django.conf import settings
 from django.db.models import Count, Q
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
@@ -80,6 +81,24 @@ class MediaAssetViewSet(ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
+
+    @action(detail=True, methods=["get"], url_path="content")
+    def content(self, request, pk=None):
+        asset = self.get_object()
+        if not asset.file:
+            return Response({"detail": "Arquivo não encontrado."}, status=404)
+        filename = Path(asset.file.name).name
+        extension = Path(filename).suffix.lower()
+        inline_types = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+        try:
+            stream = asset.file.open("rb")
+        except (FileNotFoundError, OSError):
+            return Response({"detail": "O arquivo não está disponível no armazenamento."}, status=404)
+        response = FileResponse(stream, as_attachment=request.query_params.get("download") == "1" or extension not in inline_types,
+                                filename=filename, content_type=inline_types.get(extension, "application/octet-stream"))
+        response["Cache-Control"] = "private, no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
 
     def get_queryset(self):
         queryset = super().get_queryset()

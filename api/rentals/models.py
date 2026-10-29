@@ -33,6 +33,7 @@ class RentalQuote(models.Model):
     delivery_cep = models.CharField(max_length=8, blank=True)
     return_cep = models.CharField(max_length=8, blank=True)
     transport_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    transport_estimate = models.JSONField(default=dict, blank=True)
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)

@@ -1,6 +1,6 @@
 # PANDORA
 
-Plataforma interna para locação, inspeção e manutenção dos equipamentos próprios da Mazzi Materiais de Construção.
+Plataforma para gestão de locação, inspeção, manutenção e transporte de equipamentos, com dados da empresa configuráveis por instalação.
 
 Este repositório contém a primeira versão funcional do MVP: API em Python/Django REST, frontend em Vue 3 e PostgreSQL 17 como banco principal. O SQLite permanece apenas como opção explícita para testes isolados.
 
@@ -14,14 +14,18 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 - manuais, documentos, fotos e evidências acessados no próprio equipamento e na manutenção;
 - edição e exclusão contextual dos principais cadastros;
 - planos preventivos, agendados, pré-locação e pós-locação;
-- manutenção organizada em duas áreas: locação (pré/pós) e oficina/revisões (preventivas, agendadas e corretivas), com etapa operacional como filtro;
+- manutenção organizada em duas áreas: locação (pré/pós) e oficina/revisões (preventivas, agendadas e corretivas), com apenas “Em aberto” e “Concluído” no filtro e nos cartões das OS;
 - OS em cartões com uma única ação de abertura; inspeção e mídias ficam dentro da OS, e planos periódicos permanecem acessíveis na oficina;
-- abandono de chamado com justificativa obrigatória, datas de transição e redistribuição visível;
+- OS em uma tela, com identificação fixa, técnico e avaliação operante/inoperante; etapa, prioridade e agendamento fora do formulário de atendimento, com conclusão pela ação “Concluir e liberar”;
+- mídias acessadas pela coluna do equipamento, com prévia local de imagens e PDFs no modal e download para formatos sem prévia;
+- histórico de etapas anteriores preservado, com apresentação simplificada das OS atuais;
 - ordens preventivas/corretivas, técnico, atividades e liberação técnica;
 - orçamento de locação por cliente, período e múltiplos equipamentos;
-- transporte opcional de entrega e/ou coleta, com CEP, endereço, complemento e valor discriminado no orçamento;
+- transporte opcional de entrega e/ou coleta, com endereço compartilhado por padrão, CEP, complemento e soma automática dos custos de cada trajeto;
 - cadastro de veículos e planejamento de viagens com motorista, horário, status e histórico protegido;
-- fluxo integrado: ao aprovar a reserva com entrega, a viagem aparece em Transporte; a liberação técnica precede a viagem; viagem concluída precede a entrega ou devolução quando o transporte é contratado;
+- painel de transporte por programação, com uma ação principal por viagem e motivo de bloqueio; entregas aguardam liberação da Manutenção, mas podem ser planejadas antes;
+- fluxo integrado: a aprovação cria a entrega; sua confirmação inicia a locação e cria a coleta contratada; receber a coleta no depósito registra a devolução e abre as OS finais, respeitando as permissões de cada operação;
+- rascunhos não reservam equipamentos nem criam OS ou viagens; condições comerciais e observações internas saíram do editor, sem apagar os registros históricos;
 - disponibilidade validada antes da seleção, com motivo dos bloqueios por equipamento;
 - próxima ação e motivo de bloqueio visíveis em cada locação, com destaque no fluxo operacional;
 - intervalo operacional configurável por equipamento entre locações, para limpeza, transporte ou preparo;
@@ -31,15 +35,16 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 - bloqueio de sobreposição quando o orçamento vira reserva aprovada;
 - bloqueio por OS aberta ou manutenção crítica vencida;
 - reserva com responsável, condições e cancelamento auditável;
-- OS pré-locação automática na Manutenção para cada equipamento reservado, com detalhes do equipamento e decisão operante/quebrado; equipamentos quebrados bloqueiam a entrega até o reparo;
+- OS pré-locação automática na Manutenção para cada equipamento reservado, com detalhes do equipamento e decisão operante/inoperante; equipamentos inoperantes bloqueiam a entrega até o reparo;
 - entrega vinculada à inspeção, prorrogação com nova consulta de disponibilidade e histórico;
 - devolução com OS de inspeção final aberta na Manutenção para cada equipamento; Locações acompanha o progresso e conclui a devolução;
 - encaminhamento de avarias para reparo na mesma OS pós-locação, mantendo o equipamento bloqueado;
 - planos de manutenção controlados por data, periodicidade e horas de uso, com OS preventiva agendada gerada automaticamente quando vence o intervalo em dias;
 - visão geral com sugestão explicável de compra ou substituição baseada em solicitações, procura não atendida, ocupação, custo de manutenção e preço de aquisição; listas e modais responsivos;
 - dados demonstrativos e testes automatizados.
+- preparação fiscal genérica com cadastro vazio do emitente, dados fiscais complementares de clientes/equipamentos, conferência por locação e exportação de prévia JSON; acesso controlado por ACL;
 
-Emissão fiscal **real**, cobrança, portal externo, IoT e decisões automáticas por IA continuam fora desta etapa. A sugestão de compra é um sinal estatístico simples, sem modelo externo, cotação de fornecedores ou decisão automática. Os PDFs de orçamento e comprovantes são documentos comerciais/operacionais **não fiscais e sem assinatura**; a operação não gera nota fiscal nem documento fiscal de transporte. A integração fiscal exigirá validação com a contabilidade da empresa antes de configurar regime, inscrição e documentos aplicáveis em Leme/SP.
+Emissão fiscal **real**, cobrança, portal externo, IoT e decisões automáticas por IA continuam fora desta etapa. A sugestão de compra é um sinal estatístico simples, sem modelo externo, cotação de fornecedores ou decisão automática. Os PDFs de orçamento e comprovantes são documentos comerciais/operacionais **não fiscais e sem assinatura**. A área Fiscal prepara cadastros e uma prévia de integração; ainda não calcula tributos nem transmite documentos. O emissor e o enquadramento fiscal serão definidos para a empresa que adotar o sistema.
 
 ## Estrutura
 
@@ -52,6 +57,7 @@ PANDORA/
 │   ├── maintenance/        # planos, OS e padrões criacionais
 │   ├── rentals/            # orçamentos, itens e disponibilidade
 │   ├── logistics/          # veículos e viagens opcionais da locação
+│   ├── fiscal/             # emitente configurável e preparação dos dados para emissão
 │   ├── core/               # dashboard, auditoria e configuração de IA
 │   └── config/             # settings e roteamento
 ├── frontend/               # Vue 3 + Vite
@@ -89,7 +95,9 @@ O `.env.example` já usa PostgreSQL. Informe `DB_NAME`, `DB_USER`, `DB_PASSWORD`
 
 ### Revisões periódicas
 
-Em **Manutenção → Oficina e revisões → Planos de revisão periódica**, cadastre o equipamento e o intervalo em dias. Sem data informada, o primeiro vencimento ocorre X dias após o cadastro (ou após a última manutenção, se registrada). Uma data de próxima execução pode antecipar o primeiro ciclo. Ao vencer, o sistema cria uma única OS **Preventiva · Agendada** vinculada ao plano; ela aparece na oficina e bloqueia a disponibilidade do equipamento até ser concluída ou cancelada. Ao concluir a OS, o próximo vencimento é calculado a partir da data da conclusão. A consulta da tela sincroniza planos vencidos e não duplica OS.
+Em **Manutenção → Oficina e revisões → Revisões automáticas**, escolha o equipamento e o intervalo em dias. O nome é preenchido automaticamente se não for informado; alertas, criticidade e horas de uso ficam em ajustes opcionais. Sem data informada, o primeiro vencimento ocorre X dias após o cadastro (ou após a última manutenção, se registrada). Uma data de próxima execução pode antecipar o primeiro ciclo. Ao vencer, o sistema cria uma única OS **Preventiva · Agendada** vinculada ao plano; ela aparece na oficina e bloqueia a disponibilidade do equipamento até ser concluída ou cancelada. Ao concluir a OS, o próximo vencimento é calculado a partir da data da conclusão. A consulta da tela sincroniza planos vencidos e não duplica OS.
+
+Na OS da oficina, a condição do equipamento fica na mesma tela dos dados do atendimento. Uma falha confirmada exige descrição e mantém o chamado em atendimento. “Salvar avaliação” preserva a etapa e o planejamento; a ação explícita “Concluir e liberar” exige condição operante, técnico, testes finais e permissão de liberação. Valores históricos de peças/horas/custos permanecem no banco, sem campos para alterá-los nessa tela. O código interno `BROKEN` permanece compatível com os registros existentes; o rótulo apresentado é “Inoperante”.
 
 Para gerar OS mesmo sem ninguém abrir o sistema, agende a execução diária deste comando no servidor (Agendador de Tarefas do Windows ou cron):
 
@@ -144,7 +152,7 @@ pnpm build
 ```
 
 Consulte [Arquitetura](docs/ARCHITECTURE.md) e [Contrato inicial da API](docs/API.md) para decisões de domínio, regras e endpoints.
-Para a emissão fiscal futura em Leme/SP, consulte [Preparação fiscal](docs/FISCAL_READINESS.md).
+Para configurar a preparação fiscal e planejar a integração de emissão, consulte [Preparação fiscal](docs/FISCAL_READINESS.md).
 
 Após atualizar uma instalação existente, execute `python manage.py migrate`. A interface consulta as permissões atuais do usuário ao navegar, sem exigir novo login após ajustes de ACL.
 

@@ -8,6 +8,7 @@ import EquipmentView from '../views/EquipmentView.vue'
 import MaintenanceView from '../views/MaintenanceView.vue'
 import RentalsView from '../views/RentalsView.vue'
 import LogisticsView from '../views/LogisticsView.vue'
+import FiscalView from '../views/FiscalView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -21,6 +22,7 @@ const router = createRouter({
         { path: 'manutencao', name: 'maintenance', component: MaintenanceView, meta: { permission: 'maintenance.view' } },
         { path: 'locacoes', name: 'rentals', component: RentalsView, meta: { permission: 'rentals.view' } },
         { path: 'transporte', name: 'logistics', component: LogisticsView, meta: { permission: 'logistics.view' } },
+        { path: 'fiscal', name: 'fiscal', component: FiscalView, meta: { permission: 'fiscal.view' } },
       ],
     },
   ],
@@ -37,6 +39,7 @@ router.beforeEach(async (to) => {
     const fallback = [
       ['dashboard.view', '/'], [['customers.view', 'accounts.users.view', 'accounts.groups.manage'], '/pessoas'], ['assets.view', '/equipamentos'],
       ['maintenance.view', '/manutencao'], ['rentals.view', '/locacoes'], ['logistics.view', '/transporte'],
+      ['fiscal.view', '/fiscal'],
     ].find(([permission]) => canAny(permission))
     if (!fallback) { logout(); return '/login' }
     return fallback[1]

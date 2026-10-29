@@ -50,6 +50,7 @@ class MaintenancePlanSerializer(serializers.ModelSerializer):
 
 
 class ServiceOrderSerializer(serializers.ModelSerializer):
+    operational_status = serializers.SerializerMethodField()
     equipment_name = serializers.CharField(source="equipment.name", read_only=True)
     plan_name = serializers.CharField(source="plan.name", read_only=True)
     technician_name = serializers.CharField(source="technician.full_name", read_only=True)
@@ -68,6 +69,12 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
         model = ServiceOrder
         fields = "__all__"
         read_only_fields = ("opened_by", "number", "public_id", "opened_at", "rental_inspection")
+
+    def get_operational_status(self, obj):
+        if obj.rental_inspection_id and not obj.released:
+            from rentals.adapters import InspectionDecisionAdapter
+            return InspectionDecisionAdapter.from_inspection(obj.rental_inspection)
+        return ServiceOrder.EquipmentCondition.OPERATING if obj.released else obj.equipment_condition
 
     def create(self, validated_data):
         activities = validated_data.pop("activities", [])
@@ -108,6 +115,8 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
                     for field in attempted_changes
                 })
         if self.instance and self.instance.rental_inspection_id:
+            if "equipment_condition" in attrs:
+                raise serializers.ValidationError({"equipment_condition": "A condição desta OS é registrada pela avaliação da locação."})
             inspection = self.instance.rental_inspection
             if inspection.inspection_type == "PRE_RENTAL":
                 cancelled_repair = inspection.quote.status == "CANCELLED" and inspection.result == "BLOCKED"
@@ -134,6 +143,18 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
         technician = attrs.get("technician", getattr(self.instance, "technician", None))
         abandoned_reason = attrs.get("abandoned_reason", getattr(self.instance, "abandoned_reason", ""))
         request = self.context.get("request")
+        condition = attrs.get("equipment_condition", getattr(self.instance, "equipment_condition", ServiceOrder.EquipmentCondition.PENDING))
+        diagnosis = attrs.get("diagnosis", getattr(self.instance, "diagnosis", ""))
+        if condition == ServiceOrder.EquipmentCondition.BROKEN:
+            if released or status in {ServiceOrder.Status.COMPLETED, ServiceOrder.Status.CANCELLED}:
+                raise serializers.ValidationError({"equipment_condition": "Repare e reavalie o equipamento antes de encerrar ou liberar a OS."})
+            if not diagnosis.strip():
+                raise serializers.ValidationError({"diagnosis": "Descreva o problema encontrado no equipamento."})
+        if "equipment_condition" in attrs and status == ServiceOrder.Status.COMPLETED:
+            if condition != ServiceOrder.EquipmentCondition.OPERATING or not released:
+                raise serializers.ValidationError({"equipment_condition": "Para concluir, confirme que o equipamento está operante e liberado."})
+        if released and not getattr(self.instance, "rental_inspection_id", None):
+            attrs["equipment_condition"] = ServiceOrder.EquipmentCondition.OPERATING
         if status in {ServiceOrder.Status.IN_PROGRESS, ServiceOrder.Status.WAITING_PARTS, ServiceOrder.Status.ABANDONED} and not technician:
             raise serializers.ValidationError({"technician": "Esta etapa exige um técnico responsável."})
         if status == ServiceOrder.Status.ABANDONED and not abandoned_reason.strip():

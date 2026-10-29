@@ -48,6 +48,7 @@ def snapshot_for(quote, kind):
         } for line in lines],
         "subtotal": str(quote.subtotal),
         "transport_fee": str(quote.transport_fee),
+        "transport_estimate": quote.transport_estimate,
         "discount_percent": str(quote.discount_percent) if quote.discount_percent is not None else None,
         "discount": str(quote.discount),
         "total": str(quote.total),
@@ -118,8 +119,14 @@ def render_document_pdf(document):
     totals_table = Table(totals, colWidths=[width*.73, width*.27], hAlign="RIGHT")
     totals_table.setStyle(TableStyle([("LINEABOVE", (0,3), (-1,3), .9, AMBER), ("BACKGROUND", (0,3), (-1,3), colors.HexColor("#fff8e6")), ("TOPPADDING", (0,0), (-1,-1), 6), ("BOTTOMPADDING", (0,0), (-1,-1), 6)]))
     story.extend([Spacer(1, 9), totals_table])
+    pricing = data.get("transport_estimate") or {}
+    legs = [f"{label}: {money(pricing[key]['fee'])}" for key, label in (("delivery", "Entrega"), ("return", "Coleta")) if pricing.get(key)]
+    if legs:
+        story.append(p("Composição estimada do transporte: " + " + ".join(legs), "small"))
     if document.kind == RentalDocument.Kind.QUOTE:
-        story.extend([p("Condições comerciais", "section"), p(data.get("conditions") or "Conforme negociação entre as partes."), Spacer(1, 9), p(f"Situação registrada nesta versão: {data['status']}. Consulte a disponibilidade e o estado atual no sistema.", "small")])
+        if data.get("conditions"):
+            story.extend([p("Condições comerciais", "section"), p(data["conditions"]), Spacer(1, 9)])
+        story.append(p(f"Situação registrada nesta versão: {data['status']}. Consulte a disponibilidade e o estado atual no sistema.", "small"))
     else:
         event_label = "Entrega" if document.kind == RentalDocument.Kind.DELIVERY else "Devolução"
         event_at = datetime.fromisoformat(data["event_at"]).astimezone().strftime("%d/%m/%Y %H:%M")

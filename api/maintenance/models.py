@@ -38,6 +38,11 @@ class MaintenancePlan(models.Model):
 
 
 class ServiceOrder(models.Model):
+    class EquipmentCondition(models.TextChoices):
+        PENDING = "PENDING", "A avaliar"
+        OPERATING = "OPERATING", "Operante"
+        BROKEN = "BROKEN", "Inoperante"
+
     class Type(models.TextChoices):
         PREVENTIVE = "PREVENTIVE", "Preventiva"
         CORRECTIVE = "CORRECTIVE", "Corretiva"
@@ -75,6 +80,7 @@ class ServiceOrder(models.Model):
     technician = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="assigned_orders")
     final_tests = models.TextField(blank=True)
     released = models.BooleanField(default=False)
+    equipment_condition = models.CharField(max_length=12, choices=EquipmentCondition.choices, default=EquipmentCondition.PENDING)
     labor_hours = models.DecimalField(max_digits=7, decimal_places=2, default=0)
     labor_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     parts_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -107,6 +113,8 @@ class ServiceOrder(models.Model):
         super().save(*args, **kwargs)
 
     def clean(self):
+        if self.equipment_condition == self.EquipmentCondition.BROKEN and (self.released or self.status in {self.Status.COMPLETED, self.Status.CANCELLED}):
+            raise ValidationError("Um equipamento inoperante deve permanecer em atendimento até o reparo.")
         if self.status in {self.Status.IN_PROGRESS, self.Status.WAITING_PARTS, self.Status.ABANDONED} and not self.technician_id:
             raise ValidationError("A etapa informada exige um técnico responsável.")
         if self.status == self.Status.ABANDONED and not self.abandoned_reason.strip():

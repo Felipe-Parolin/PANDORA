@@ -3,6 +3,7 @@ import re
 from rest_framework import serializers
 
 from .models import TransportTask, Vehicle
+from .services import trip_readiness
 
 
 class VehicleSerializer(serializers.ModelSerializer):
@@ -34,6 +35,13 @@ class VehicleSerializer(serializers.ModelSerializer):
 
 
 class TransportTaskSerializer(serializers.ModelSerializer):
+    workflow = serializers.SerializerMethodField()
+    equipment = serializers.SerializerMethodField()
+    freight_cost = serializers.SerializerMethodField()
+    transport_total = serializers.DecimalField(source="quote.transport_fee", max_digits=12, decimal_places=2, read_only=True)
+    rental_start_date = serializers.DateField(source="quote.start_date", read_only=True)
+    rental_end_date = serializers.DateField(source="quote.end_date", read_only=True)
+    contact_phone = serializers.CharField(source="quote.customer.phone", read_only=True)
     quote_number = serializers.CharField(source="quote.number", read_only=True)
     quote_status = serializers.CharField(source="quote.status", read_only=True)
     customer_name = serializers.CharField(source="quote.customer.name", read_only=True)
@@ -49,6 +57,16 @@ class TransportTaskSerializer(serializers.ModelSerializer):
             "quote", "leg", "status", "departed_at", "completed_at", "created_by", "created_at",
         )
 
+    def get_workflow(self, obj):
+        return trip_readiness(obj)
+
+    def get_equipment(self, obj):
+        return [{"id": line.equipment_id, "code": line.equipment.internal_code, "name": line.equipment.name} for line in obj.quote.items.all()]
+
+    def get_freight_cost(self, obj):
+        leg = "delivery" if obj.leg == TransportTask.Leg.DELIVERY else "return"
+        return (obj.quote.transport_estimate.get(leg) or {}).get("fee")
+
     def validate(self, attrs):
         if self.instance and self.instance.status != TransportTask.Status.PLANNED:
             raise serializers.ValidationError("Apenas viagens planejadas podem ser alteradas.")
@@ -62,6 +80,8 @@ class TransportTaskSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"vehicle": "Este veículo já está em transporte."})
         if driver and not driver.is_active:
             raise serializers.ValidationError({"driver": "Selecione um funcionário ativo."})
+        if driver and driver.driving_tasks.filter(status=TransportTask.Status.IN_TRANSIT).exclude(pk=getattr(self.instance, "pk", None)).exists():
+            raise serializers.ValidationError({"driver": "Este motorista já está em outra viagem."})
         if not attrs.get("address", getattr(self.instance, "address", "")).strip():
             raise serializers.ValidationError({"address": "Informe o endereço da entrega ou coleta."})
         return attrs

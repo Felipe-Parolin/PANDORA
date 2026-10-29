@@ -14,7 +14,7 @@ from rest_framework.exceptions import APIException, ValidationError
 
 class AddressProviderUnavailable(APIException):
     status_code = 503
-    default_detail = "A consulta de CEP está indisponível. Informe o endereço e o frete manualmente."
+    default_detail = "A consulta de CEP está indisponível. Tente novamente para calcular o transporte."
 
 
 def lookup_cep(raw_cep):
@@ -73,9 +73,9 @@ def estimate_freight(destination):
     try:
         origin = lookup_cep(origin_cep)
     except (ValidationError, AddressProviderUnavailable):
-        return {"fee": None, "distance_km": None, "reason": "CEP de origem indisponível; informe o frete manualmente."}
+        return {"fee": None, "distance_km": None, "reason": "CEP de origem indisponível; tente novamente para calcular o transporte."}
     if None in (origin["latitude"], origin["longitude"], destination["latitude"], destination["longitude"]):
-        return {"fee": None, "distance_km": None, "reason": "Este CEP não tem coordenadas confiáveis; informe o frete manualmente."}
+        return {"fee": None, "distance_km": None, "reason": "Este CEP não tem coordenadas confiáveis. Verifique o CEP ou configure a origem do transporte."}
 
     lat1, lon1, lat2, lon2 = map(math.radians, (
         origin["latitude"], origin["longitude"], destination["latitude"], destination["longitude"],
@@ -90,3 +90,24 @@ def estimate_freight(destination):
         "provisional_origin": settings.FREIGHT_ORIGIN_PROVISIONAL,
         "method": "Distância em linha reta com fator de ajuste; não é rota viária nem tarifa oficial.",
     }
+
+
+def estimate_quote_transport(delivery_cep=None, return_cep=None):
+    """Price only the requested legs and reuse a lookup for a shared destination."""
+    estimates = {}
+    result = {"delivery": None, "return": None}
+    total = Decimal("0")
+    for leg, cep in (("delivery", delivery_cep), ("return", return_cep)):
+        if cep is None:
+            continue
+        if not cep:
+            raise ValidationError({f"{leg}_cep": "Informe o CEP para calcular o transporte."})
+        if cep not in estimates:
+            estimate = estimate_freight(lookup_cep(cep))
+            if estimate["fee"] is None:
+                raise ValidationError({"transport_fee": estimate["reason"]})
+            estimates[cep] = {**estimate, "cep": cep}
+        result[leg] = dict(estimates[cep])
+        total += Decimal(result[leg]["fee"])
+    result["total"] = str(total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    return result

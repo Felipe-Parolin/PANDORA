@@ -12,6 +12,7 @@ from customers.views import CustomerViewSet
 from maintenance.views import MaintenancePlanViewSet, ServiceOrderViewSet
 from logistics.views import TransportTaskViewSet, VehicleViewSet
 from rentals.views import RentalInspectionViewSet, RentalQuoteViewSet
+from fiscal.views import FiscalCompanyView, FiscalCustomerView, FiscalEquipmentView, FiscalRentalViewSet
 
 router = DefaultRouter()
 router.register("users", UserViewSet, basename="user")
@@ -27,6 +28,7 @@ router.register("rental-inspections", RentalInspectionViewSet, basename="rental-
 router.register("vehicles", VehicleViewSet, basename="vehicle")
 router.register("transport-tasks", TransportTaskViewSet, basename="transport-task")
 router.register("notifications", NotificationViewSet, basename="notification")
+router.register("fiscal/rentals", FiscalRentalViewSet, basename="fiscal-rental")
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -35,6 +37,9 @@ urlpatterns = [
     path("api/auth/login/", EmailTokenObtainPairView.as_view(), name="login"),
     path("api/auth/refresh/", TokenRefreshView.as_view(), name="refresh"),
     path("api/auth/me/", CurrentUserView.as_view(), name="me"),
+    path("api/fiscal/company/", FiscalCompanyView.as_view(), name="fiscal-company"),
+    path("api/fiscal/customers/<int:pk>/", FiscalCustomerView.as_view(), name="fiscal-customer"),
+    path("api/fiscal/equipment/<int:pk>/", FiscalEquipmentView.as_view(), name="fiscal-equipment"),
     path("api/", include(router.urls)),
 ]
 
