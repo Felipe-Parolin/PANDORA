@@ -35,3 +35,8 @@ class AIService:
 
     def get_configuration(self):
         return self.configuration
+
+    def suggest_purchase(self):
+        from .recommendations import suggest_equipment_purchase
+
+        return suggest_equipment_purchase()

@@ -16,6 +16,10 @@ Os nomes do documento estão em português e os nomes de código seguem a conven
 | Abstract Factory | `FabricaPreventiva` / `FabricaCorretiva` | `PreventiveMaintenanceFactory` / `CorrectiveMaintenanceFactory` | criam as famílias concretas |
 | Abstract Factory | `ServicoPlanejamentoManutencao` | `MaintenancePlanningService` | consome somente as interfaces dos produtos |
 
+## Extensão estrutural desta versão
+
+O documento preliminar acima modela padrões **criacionais**. Para a simplificação recente da manutenção, foi acrescentado um padrão estrutural **Adapter** em `rentals.adapters.InspectionDecisionAdapter`: a interface atual recebe `equipment_decision` (`OPERATING` ou `BROKEN`) e traduz para `condition`, `result` e `critical_impediment` já persistidos. Na leitura, expõe `operational_status`. Assim, a experiência não exige checklist e os registros antigos continuam legíveis. Esta extensão não é atribuída ao diagrama original do PDF.
+
 ## Resultado da auditoria
 
 - O Singleton já representava corretamente a unicidade por processo, mas agora possui bloqueio explícito para inicialização concorrente e um consumidor real.

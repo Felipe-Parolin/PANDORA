@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from assets.models import Equipment
 from django.db.models import Q
 from maintenance.models import ServiceOrder
@@ -11,49 +13,13 @@ BLOCKING_RENTAL_STATUSES = (
     RentalQuote.Status.RETURNED,
 )
 
-DEFAULT_PRE_RENTAL_CHECKLIST = (
-    "Estrutura e carenagens sem avarias",
-    "Proteções e dispositivos de segurança",
-    "Níveis, cabos, mangueiras e conexões",
-    "Teste de funcionamento e parada de emergência",
-    "Limpeza e acessórios conferidos",
-)
-
-DEFAULT_RETURN_CHECKLIST = (
-    "Comparar estrutura e carenagens com a saída",
-    "Conferir proteções e dispositivos de segurança",
-    "Verificar vazamentos, cabos e conexões",
-    "Executar teste funcional e parada de emergência",
-    "Conferir limpeza, combustível e acessórios",
-)
-
-
-def inspection_template(equipment, inspection_type):
-    configured = (
-        equipment.category.pre_rental_checklist
-        if inspection_type == RentalInspection.Type.PRE_RENTAL
-        else equipment.category.return_checklist
-    )
-    source = configured or (
-        DEFAULT_PRE_RENTAL_CHECKLIST
-        if inspection_type == RentalInspection.Type.PRE_RENTAL
-        else DEFAULT_RETURN_CHECKLIST
-    )
-    result = []
-    for index, item in enumerate(source):
-        label = item.get("label", "") if isinstance(item, dict) else str(item)
-        if label.strip():
-            result.append({"id": str(index + 1), "label": label.strip(), "status": "PENDING", "notes": ""})
-    return result
-
-
 def ensure_inspections(quote, inspection_type):
-    for line in quote.items.select_related("equipment__category"):
+    """Create one decision record per rented item; legacy checklists remain archived."""
+    for line in quote.items.select_related("equipment"):
         RentalInspection.objects.get_or_create(
             quote=quote,
             equipment=line.equipment,
             inspection_type=inspection_type,
-            defaults={"checklist": inspection_template(line.equipment, inspection_type)},
         )
 
 
@@ -95,7 +61,7 @@ def ensure_return_orders(quote, opened_by):
                 "diagnosis": inspection.observations if needs_repair else "",
                 "opened_by": opened_by,
                 "technician": inspection.performed_by if completed or needs_repair else None,
-                "final_tests": "Checklist de devolução concluído." if completed else "",
+                "final_tests": "Condição operante confirmada na devolução." if completed else "",
                 "released": completed,
             },
         )
@@ -133,15 +99,18 @@ def refresh_equipment_status(equipment):
 def availability_reason(equipment, start_date, end_date, ignore_quote=None):
     if equipment.status in {equipment.Status.MAINTENANCE, equipment.Status.INSPECTION, equipment.Status.INACTIVE}:
         return "Equipamento bloqueado pela situação operacional."
+    turnaround = equipment.turnaround_days or 0
     conflicts = RentalItem.objects.filter(
         equipment=equipment,
         quote__status__in=BLOCKING_RENTAL_STATUSES,
-        quote__start_date__lte=end_date,
-        quote__end_date__gte=start_date,
+        quote__start_date__lte=end_date + timedelta(days=turnaround),
+        quote__end_date__gte=start_date - timedelta(days=turnaround),
     )
     if ignore_quote:
         conflicts = conflicts.exclude(quote=ignore_quote)
     if conflicts.exists():
+        if not conflicts.filter(quote__start_date__lte=end_date, quote__end_date__gte=start_date).exists():
+            return f"Intervalo operacional de {turnaround} dia(s) para limpeza, transporte ou preparo entre locações."
         return "Já existe uma locação aprovada no período informado."
     orders = blocking_service_orders(equipment)
     if ignore_quote:

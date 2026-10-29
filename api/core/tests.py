@@ -1,12 +1,17 @@
 from django.db import connection
+from django.utils import timezone
+from datetime import timedelta
 from django.test import SimpleTestCase, TestCase
 from rest_framework.test import APIClient
 from accounts.models import User
 from assets.models import Equipment, EquipmentCategory
 from maintenance.models import ServiceOrder
+from customers.models import Customer
+from rentals.models import RentalItem, RentalQuote, UnmetRentalDemand
 from .models import Notification
 
 from .patterns import AIService, AISettings
+from .recommendations import suggest_equipment_purchase
 
 
 class SingletonPatternTests(SimpleTestCase):
@@ -22,6 +27,49 @@ class HealthTests(TestCase):
         response = APIClient().get("/api/health/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["database"], connection.vendor)
+
+
+class PurchaseSuggestionTests(TestCase):
+    def test_suggestion_requires_rental_history_and_shows_evidence(self):
+        self.assertEqual(suggest_equipment_purchase()["status"], "INSUFFICIENT_DATA")
+        seller = User.objects.create_user(email="seller@example.invalid", password="test", full_name="Vendas", role=User.Role.SALES)
+        customer = Customer.objects.create(person_type="PF", name="Cliente", document="12345678909", phone="19999999999")
+        category = EquipmentCategory.objects.create(name="Cortadoras", default_daily_rate=100)
+        equipment = Equipment.objects.create(category=category, name="Cortadora", brand="Teste", model="C1", serial_number="PURCHASE-1", internal_code="EQ-P1", status=Equipment.Status.MAINTENANCE, daily_rate=100)
+        quote = RentalQuote.objects.create(customer=customer, start_date=timezone.localdate(), end_date=timezone.localdate() + timedelta(days=2), created_by=seller)
+        RentalItem.objects.create(quote=quote, equipment=equipment, daily_rate=100, quantity_days=3)
+        result = AIService().suggest_purchase()
+        self.assertEqual(result["status"], "REVIEW")
+        self.assertEqual(result["equipment_id"], equipment.id)
+        self.assertEqual(result["evidence"]["category_available"], 0)
+        self.assertEqual(result["evidence"]["requested_days"], 3)
+        self.assertEqual(result["confidence"], "LOW")
+        admin = User.objects.create_user(email="admin@example.invalid", password="test", full_name="Admin", role=User.Role.ADMIN)
+        client = APIClient()
+        client.force_authenticate(admin)
+        dashboard = client.get("/api/dashboard/")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertEqual(dashboard.data["purchase_suggestion"]["equipment_id"], equipment.id)
+
+    def test_recommendation_uses_utilization_lost_demand_and_maintenance_cost(self):
+        seller = User.objects.create_user(email="purchasing@example.invalid", password="test", full_name="Vendas", role=User.Role.SALES)
+        customer = Customer.objects.create(person_type="PF", name="Cliente", document="12345678909", phone="19999999999")
+        category = EquipmentCategory.objects.create(name="Geradores", default_daily_rate=100)
+        equipment = Equipment.objects.create(
+            category=category, name="Gerador", brand="Teste", model="G1", serial_number="PURCHASE-2",
+            internal_code="EQ-P2", daily_rate=100, acquisition_cost=1000,
+        )
+        today = timezone.localdate()
+        quote = RentalQuote.objects.create(customer=customer, start_date=today - timedelta(days=4), end_date=today - timedelta(days=2), status=RentalQuote.Status.COMPLETED, created_by=seller)
+        RentalItem.objects.create(quote=quote, equipment=equipment, daily_rate=100, quantity_days=3)
+        UnmetRentalDemand.objects.create(equipment=equipment, customer=customer, start_date=today, end_date=today + timedelta(days=2), reason="Indisponível", created_by=seller)
+        ServiceOrder.objects.create(equipment=equipment, maintenance_type=ServiceOrder.Type.CORRECTIVE, symptoms="Reparo", labor_cost=250, parts_cost=200, opened_by=seller)
+        result = suggest_equipment_purchase()
+        self.assertEqual(result["recommendation_type"], "REPLACEMENT")
+        self.assertEqual(result["evidence"]["unmet_demand"], 1)
+        self.assertEqual(result["evidence"]["maintenance_cost"], "450.00")
+        self.assertEqual(result["evidence"]["acquisition_cost"], "1000.00")
+        self.assertGreater(result["evidence"]["utilization_percent"], 0)
 
 
 class NotificationTests(TestCase):

@@ -23,19 +23,23 @@ Este repositório contém a primeira versão funcional do MVP: API em Python/Dja
 - cadastro de veículos e planejamento de viagens com motorista, horário, status e histórico protegido;
 - fluxo integrado: ao aprovar a reserva com entrega, a viagem aparece em Transporte; a liberação técnica precede a viagem; viagem concluída precede a entrega ou devolução quando o transporte é contratado;
 - disponibilidade validada antes da seleção, com motivo dos bloqueios por equipamento;
+- próxima ação e motivo de bloqueio visíveis em cada locação, com destaque no fluxo operacional;
+- intervalo operacional configurável por equipamento entre locações, para limpeza, transporte ou preparo;
+- registro explícito de procura não atendida quando um equipamento estiver indisponível;
 - cálculo automático de diárias, preço negociado por item, desconto e total;
+- orçamento PDF versionado e comprovantes operacionais de entrega/devolução, preservando o conteúdo gerado em cada versão;
 - bloqueio de sobreposição quando o orçamento vira reserva aprovada;
 - bloqueio por OS aberta ou manutenção crítica vencida;
 - reserva com responsável, condições e cancelamento auditável;
-- OS pré-locação automática na Manutenção para cada equipamento reservado, com checklist por categoria, fotos, observações e impedimento crítico;
+- OS pré-locação automática na Manutenção para cada equipamento reservado, com detalhes do equipamento e decisão operante/quebrado; equipamentos quebrados bloqueiam a entrega até o reparo;
 - entrega vinculada à inspeção, prorrogação com nova consulta de disponibilidade e histórico;
 - devolução com OS de inspeção final aberta na Manutenção para cada equipamento; Locações acompanha o progresso e conclui a devolução;
 - encaminhamento de avarias para reparo na mesma OS pós-locação, mantendo o equipamento bloqueado;
 - planos de manutenção controlados por data, periodicidade e horas de uso, com OS preventiva agendada gerada automaticamente quando vence o intervalo em dias;
-- dashboard, listas em cartões e modais responsivos para desktop e celular;
+- visão geral com sugestão explicável de compra ou substituição baseada em solicitações, procura não atendida, ocupação, custo de manutenção e preço de aquisição; listas e modais responsivos;
 - dados demonstrativos e testes automatizados.
 
-Emissão fiscal **real**, cobrança, portal externo, IoT e decisões automáticas por IA continuam fora desta etapa. A operação de locação não gera nota fiscal nem documento fiscal de transporte. A integração fiscal exigirá validação com a contabilidade da empresa antes de configurar regime, inscrição e documentos aplicáveis em Leme/SP.
+Emissão fiscal **real**, cobrança, portal externo, IoT e decisões automáticas por IA continuam fora desta etapa. A sugestão de compra é um sinal estatístico simples, sem modelo externo, cotação de fornecedores ou decisão automática. Os PDFs de orçamento e comprovantes são documentos comerciais/operacionais **não fiscais e sem assinatura**; a operação não gera nota fiscal nem documento fiscal de transporte. A integração fiscal exigirá validação com a contabilidade da empresa antes de configurar regime, inscrição e documentos aplicáveis em Leme/SP.
 
 ## Estrutura
 

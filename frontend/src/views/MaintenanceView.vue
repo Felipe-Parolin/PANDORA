@@ -35,12 +35,12 @@ const quickPlanning = ref(false)
 const orderForm = reactive({
   equipment: '', maintenance_type: 'CORRECTIVE', priority: 'NORMAL', symptoms: '',
   diagnosis: '', technician: '', status: 'OPEN', scheduled_at: '', final_tests: '',
-  released: false, labor_hours: 0, parts_used: '', abandoned_reason: '',
+  released: false, labor_hours: 0, labor_cost: 0, parts_cost: 0, parts_used: '', abandoned_reason: '',
 })
 const planForm = reactive({
   equipment: '', name: '', maintenance_type: 'PREVENTIVE', interval_days: 90, usage_limit: null,
   next_due_date: '', last_service_date: '', last_service_usage_hours: null, advance_notice_days: 15,
-  advance_notice_usage_hours: 10, criticality: 'MEDIUM', checklist: [], active: true,
+  advance_notice_usage_hours: 10, criticality: 'MEDIUM', active: true,
 })
 
 const alerts = computed(() => plans.value.filter(item => ['OVERDUE', 'CRITICAL', 'UPCOMING'].includes(item.alert_status)))
@@ -186,12 +186,14 @@ function openOrder(item = null, defaults = {}) {
     final_tests: item.final_tests,
     released: item.released,
     labor_hours: item.labor_hours,
+    labor_cost: item.labor_cost,
+    parts_cost: item.parts_cost,
     parts_used: item.parts_used,
     abandoned_reason: item.abandoned_reason || '',
   } : {
     equipment: '', maintenance_type: 'CORRECTIVE', priority: 'NORMAL',
     symptoms: '', diagnosis: '', technician: '', status: 'OPEN', scheduled_at: '', final_tests: '',
-    released: false, labor_hours: 0, parts_used: '', abandoned_reason: '', ...defaults,
+    released: false, labor_hours: 0, labor_cost: 0, parts_cost: 0, parts_used: '', abandoned_reason: '', ...defaults,
   })
 }
 
@@ -234,11 +236,11 @@ function openPlan(item = null) {
     interval_days: item.interval_days, usage_limit: item.usage_limit, next_due_date: item.next_due_date || '',
     last_service_date: item.last_service_date || '', last_service_usage_hours: item.last_service_usage_hours,
     advance_notice_days: item.advance_notice_days, advance_notice_usage_hours: item.advance_notice_usage_hours,
-    criticality: item.criticality, checklist: item.checklist, active: item.active,
+    criticality: item.criticality, active: item.active,
   } : {
     equipment: equipment.value[0]?.id || '', name: '', maintenance_type: 'PREVENTIVE', interval_days: 90,
     usage_limit: null, next_due_date: '', last_service_date: '', last_service_usage_hours: null,
-    advance_notice_days: 15, advance_notice_usage_hours: 10, criticality: 'MEDIUM', checklist: [], active: true,
+    advance_notice_days: 15, advance_notice_usage_hours: 10, criticality: 'MEDIUM', active: true,
   })
 }
 
@@ -286,6 +288,8 @@ const saveLinkedOrder = () => persist('/service-orders/', {
   technician: orderForm.technician || null,
   scheduled_at: orderForm.scheduled_at || null,
   diagnosis: orderForm.diagnosis,
+  labor_cost: orderForm.labor_cost,
+  parts_cost: orderForm.parts_cost,
   abandoned_reason: orderForm.status === 'ABANDONED' ? orderForm.abandoned_reason : '',
   ...(repairAfterCancellation.value ? { final_tests: orderForm.final_tests, released: orderForm.released } : {}),
 })
@@ -396,12 +400,12 @@ onMounted(async () => {
       </div>
 
     <ModalDialog v-if="modal === 'order-detail'" :title="editing.number" @close="modal = null"><div class="maintenance-readonly-detail"><StatusBadge :value="editing.status" :label="editing.status_label" /><h3>{{ editing.equipment_name }}</h3><p>{{ editing.maintenance_type_label }} · {{ editing.technician_name || 'Sem técnico' }}</p><dl><div><dt>Agendamento</dt><dd>{{ editing.scheduled_at ? `${shortDate(scheduledDay(editing.scheduled_at))} às ${new Date(editing.scheduled_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'Sem data' }}</dd></div><div><dt>Solicitação</dt><dd>{{ editing.symptoms }}</dd></div><div v-if="editing.diagnosis"><dt>Diagnóstico</dt><dd>{{ editing.diagnosis }}</dd></div><div v-if="editing.abandoned_reason"><dt>Motivo do abandono</dt><dd>{{ editing.abandoned_reason }}</dd></div></dl><div class="maintenance-order-tools"><button v-if="editing.rental_inspection" class="btn primary" @click="modal = null; openInspection(editing)"><ClipboardPlus :size="16" />{{ editing.maintenance_type === 'POST_RENTAL' ? editing.inspection_result === 'PENDING' && (can('maintenance.manage') || can('rentals.inspect')) ? 'Abrir inspeção final' : 'Ver inspeção final' : 'Ver inspeção pré-locação' }}</button><button v-if="can('media.view')" class="btn secondary" @click="openMedia(editing.equipment)"><Files :size="16" />Mídias do equipamento</button></div></div><div class="modal-actions"><span class="spacer" /><button class="btn secondary" @click="modal = null">Fechar</button></div></ModalDialog>
-    <ModalDialog v-if="modal === 'return-order'" :title="`Inspeção final · ${editing.number}`" @close="modal = null"><div class="maintenance-readonly-detail"><StatusBadge :value="editing.status" :label="editing.status_label" /><h3>{{ editing.equipment_name }}</h3><p>Locação {{ editing.rental_quote_number }} · devolução registrada</p><dl><div><dt>Solicitação</dt><dd>{{ editing.symptoms }}</dd></div><div><dt>Próxima etapa</dt><dd>Confira o equipamento e conclua o checklist de devolução. Se houver avaria, esta mesma OS seguirá para reparo.</dd></div></dl><div class="maintenance-order-tools"><button class="btn primary" @click="modal = null; openInspection(editing)"><ClipboardPlus :size="16" />Abrir inspeção final</button><button v-if="can('media.view')" class="btn secondary" @click="openMedia(editing.equipment)"><Files :size="16" />Mídias do equipamento</button></div></div><div class="modal-actions"><span class="spacer" /><button class="btn secondary" @click="modal = null">Fechar</button></div></ModalDialog>
+    <ModalDialog v-if="modal === 'return-order'" :title="`Inspeção final · ${editing.number}`" @close="modal = null"><div class="maintenance-readonly-detail"><StatusBadge :value="editing.status" :label="editing.status_label" /><h3>{{ editing.equipment_name }}</h3><p>Locação {{ editing.rental_quote_number }} · devolução registrada</p><dl><div><dt>Solicitação</dt><dd>{{ editing.symptoms }}</dd></div><div><dt>Próxima etapa</dt><dd>Confirme se o equipamento está operante ou quebrado. Se houver avaria, esta mesma OS seguirá para reparo.</dd></div></dl><div class="maintenance-order-tools"><button class="btn primary" @click="modal = null; openInspection(editing)"><ClipboardPlus :size="16" />Avaliar equipamento</button><button v-if="can('media.view')" class="btn secondary" @click="openMedia(editing.equipment)"><Files :size="16" />Mídias do equipamento</button></div></div><div class="modal-actions"><span class="spacer" /><button class="btn secondary" @click="modal = null">Fechar</button></div></ModalDialog>
     <ModalDialog v-if="modal === 'plan-detail'" :title="editing.name" @close="modal = null"><div class="maintenance-readonly-detail"><StatusBadge :value="editing.alert_status" :label="({ OK: 'Em dia', UPCOMING: 'Próxima', OVERDUE: 'Vencida', CRITICAL: 'Crítica' })[editing.alert_status]" /><h3>{{ editing.equipment_name }}</h3><p>{{ editing.maintenance_type_label }} · {{ editing.criticality_label }}</p><dl><div><dt>Próxima execução</dt><dd>{{ editing.due_date ? shortDate(editing.due_date) : 'Sem data' }}</dd></div><div v-if="editing.interval_days"><dt>Periodicidade</dt><dd>A cada {{ editing.interval_days }} dias</dd></div><div v-if="editing.due_usage_hours !== null"><dt>Gatilho por uso</dt><dd>{{ editing.due_usage_hours }} h</dd></div></dl><div v-if="can('media.view')" class="maintenance-order-tools"><button class="btn secondary" @click="openMedia(editing.equipment)"><Files :size="16" />Mídias do equipamento</button></div></div><div class="modal-actions"><span class="spacer" /><button class="btn secondary" @click="modal = null">Fechar</button></div></ModalDialog>
 
     <ModalDialog v-if="modal === 'linked-order'" :title="`Atendimento ${editing.number}`" wide @close="modal = null">
       <form class="service-order-form" @submit.prevent="saveLinkedOrder">
-        <div class="order-form-intro"><ClipboardPlus :size="22" /><div><strong>Inspeção pré-locação · {{ editing.rental_quote_number }}</strong><span>{{ repairAfterCancellation ? 'Reserva cancelada após falha: repare e libere o equipamento neste chamado.' : `${editing.equipment_name}. A entrega só é liberada após o checklist ser aprovado.` }}</span></div></div>
+        <div class="order-form-intro"><ClipboardPlus :size="22" /><div><strong>Avaliação pré-locação · {{ editing.rental_quote_number }}</strong><span>{{ repairAfterCancellation ? 'Reserva cancelada após falha: repare e libere o equipamento neste chamado.' : `${editing.equipment_name}. A entrega só é liberada quando o equipamento estiver operante.` }}</span></div></div>
         <section class="order-form-section"><header><span>01</span><div><h3>Chamado e triagem</h3><p>Organize o responsável e a etapa do atendimento</p></div></header><div class="form-grid">
           <div class="form-field span-2"><label>Solicitação</label><div class="order-readout">{{ editing.symptoms }}</div></div>
           <div class="form-field"><label>Etapa</label><select v-model="orderForm.status" :disabled="!linkedOrderEditable"><option value="OPEN">Aberto</option><option value="SCHEDULED">Agendado</option><option value="IN_PROGRESS">Em andamento</option><option value="WAITING_PARTS">Aguardando peças</option><option value="ABANDONED">Abandonado</option><option v-if="repairAfterCancellation || editing.status === 'COMPLETED'" value="COMPLETED">Concluído</option><option v-if="editing.status === 'CANCELLED'" value="CANCELLED">Cancelado</option></select></div>
@@ -409,10 +413,12 @@ onMounted(async () => {
           <div class="form-field"><label>Técnico responsável</label><select v-model="orderForm.technician" :disabled="!linkedOrderEditable" :required="['IN_PROGRESS', 'WAITING_PARTS', 'ABANDONED'].includes(orderForm.status)"><option value="">Sem técnico / fila de triagem</option><option v-for="user in technicians" :key="user.id" :value="user.id">{{ user.full_name }}</option></select></div>
           <div class="form-field"><label>Agendamento</label><input v-model="orderForm.scheduled_at" type="datetime-local" :disabled="!linkedOrderEditable" :required="orderForm.status === 'SCHEDULED'" /></div>
           <div v-if="orderForm.status === 'ABANDONED'" class="form-field span-2"><label>Motivo do abandono</label><textarea v-model="orderForm.abandoned_reason" rows="3" required :disabled="!linkedOrderEditable" /></div>
-          <div class="form-field span-2"><label>Notas do atendimento</label><textarea v-model="orderForm.diagnosis" rows="3" :disabled="!linkedOrderEditable" placeholder="O que foi encontrado? Registre o andamento antes de finalizar o checklist." /></div>
+          <div class="form-field span-2"><label>Notas do atendimento</label><textarea v-model="orderForm.diagnosis" rows="3" :disabled="!linkedOrderEditable" placeholder="O que foi encontrado? Registre o andamento do atendimento." /></div>
+          <div class="form-field"><label>Custo de mão de obra (R$)</label><input v-model="orderForm.labor_cost" type="number" min="0" step="0.01" :disabled="!linkedOrderEditable" /></div>
+          <div class="form-field"><label>Custo de peças (R$)</label><input v-model="orderForm.parts_cost" type="number" min="0" step="0.01" :disabled="!linkedOrderEditable" /></div>
           <template v-if="repairAfterCancellation"><div class="form-field span-2"><label>Testes finais do reparo</label><textarea v-model="orderForm.final_tests" rows="3" :disabled="!linkedOrderEditable" placeholder="Descreva os testes que comprovam que o equipamento voltou a operar." /></div><label v-if="orderForm.status === 'COMPLETED'" class="check-line span-2 order-release"><input v-model="orderForm.released" type="checkbox" :disabled="!linkedOrderEditable" />Liberar equipamento após reparo</label></template>
         </div></section>
-        <div class="order-checklist-cta"><div><strong>{{ repairAfterCancellation ? 'Inspeção original' : 'Inspeção da locação' }}</strong><span>{{ repairAfterCancellation ? 'Confira a falha e as evidências que originaram este reparo.' : 'Abra o checklist para registrar conformidade, falhas e evidências.' }}</span></div><button type="button" class="btn primary" @click="modal = null; openInspection(editing)"><ClipboardPlus :size="16" />{{ editing.status === 'COMPLETED' ? 'Ver inspeção' : 'Abrir inspeção' }}</button></div>
+        <div class="order-assessment-cta"><div><strong>{{ repairAfterCancellation ? 'Avaliação original' : 'Condição do equipamento' }}</strong><span>{{ repairAfterCancellation ? 'Confira a falha que originou este reparo.' : 'Registre se está operante ou quebrado antes de liberar a locação.' }}</span></div><button type="button" class="btn primary" @click="modal = null; openInspection(editing)"><ClipboardPlus :size="16" />{{ editing.status === 'COMPLETED' ? 'Ver avaliação' : 'Avaliar equipamento' }}</button></div>
         <div v-if="can('media.view')" class="maintenance-order-tools"><button type="button" class="btn secondary" @click="openMedia(editing.equipment)"><Files :size="16" />Mídias do equipamento</button></div>
         <div v-if="error" class="error-message">{{ error }}</div><div class="modal-actions"><button type="button" class="btn secondary" @click="modal = null">Fechar</button><span class="spacer" /><button v-if="linkedOrderEditable" class="btn primary" :disabled="busy">{{ busy ? 'Salvando...' : 'Salvar atendimento' }}</button></div>
       </form>
@@ -450,6 +456,8 @@ onMounted(async () => {
           <div class="form-field span-2"><label>Diagnóstico</label><textarea v-model="orderForm.diagnosis" rows="3" placeholder="Causa encontrada e serviço realizado." /></div>
           <div class="form-field"><label>Horas de mão de obra</label><input v-model="orderForm.labor_hours" type="number" min="0" step="0.25" /></div>
           <div class="form-field"><label>Peças utilizadas</label><textarea v-model="orderForm.parts_used" rows="2" /></div>
+          <div class="form-field"><label>Custo de mão de obra (R$)</label><input v-model="orderForm.labor_cost" type="number" min="0" step="0.01" /></div>
+          <div class="form-field"><label>Custo de peças (R$)</label><input v-model="orderForm.parts_cost" type="number" min="0" step="0.01" /></div>
           <div class="form-field span-2"><label>Testes finais</label><textarea v-model="orderForm.final_tests" rows="3" placeholder="Descreva como o funcionamento foi validado." /></div>
           <label v-if="can('maintenance.release') && orderForm.status === 'COMPLETED'" class="check-line span-2 order-release"><input v-model="orderForm.released" type="checkbox" />Liberar equipamento após validação técnica</label>
         </div></section>

@@ -10,6 +10,7 @@ from logistics.serializers import TransportTaskSerializer
 from logistics.services import ensure_transport_task
 from logistics.models import TransportTask
 from .models import RentalExtension, RentalInspection, RentalItem, RentalQuote
+from .adapters import InspectionDecisionAdapter
 from .services import availability_reason, ensure_inspections, ensure_pre_rental_orders, refresh_equipment_status
 
 
@@ -25,9 +26,15 @@ class RentalItemSerializer(serializers.ModelSerializer):
 
 
 class RentalInspectionSerializer(serializers.ModelSerializer):
+    equipment_decision = serializers.ChoiceField(choices=(InspectionDecisionAdapter.OPERATING, InspectionDecisionAdapter.BROKEN), write_only=True, required=False)
+    operational_status = serializers.SerializerMethodField()
     equipment_name = serializers.CharField(source="equipment.name", read_only=True)
     internal_code = serializers.CharField(source="equipment.internal_code", read_only=True)
     category_name = serializers.CharField(source="equipment.category.name", read_only=True)
+    equipment_brand = serializers.CharField(source="equipment.brand", read_only=True)
+    equipment_model = serializers.CharField(source="equipment.model", read_only=True)
+    equipment_serial_number = serializers.CharField(source="equipment.serial_number", read_only=True)
+    equipment_status_label = serializers.CharField(source="equipment.get_status_display", read_only=True)
     inspection_type_label = serializers.CharField(source="get_inspection_type_display", read_only=True)
     result_label = serializers.CharField(source="get_result_display", read_only=True)
     condition_label = serializers.CharField(source="get_condition_display", read_only=True)
@@ -37,12 +44,18 @@ class RentalInspectionSerializer(serializers.ModelSerializer):
     class Meta:
         model = RentalInspection
         fields = "__all__"
-        read_only_fields = ("quote", "equipment", "inspection_type", "performed_by", "performed_at", "created_at", "updated_at")
+        read_only_fields = ("quote", "equipment", "inspection_type", "checklist", "performed_by", "performed_at", "created_at", "updated_at")
 
     def get_media_count(self, obj):
         return obj.media.count()
 
+    def get_operational_status(self, obj):
+        return InspectionDecisionAdapter.from_inspection(obj)
+
     def validate(self, attrs):
+        decision = attrs.pop("equipment_decision", None)
+        if decision:
+            attrs.update(InspectionDecisionAdapter.to_inspection_fields(decision))
         if self.instance:
             expected_status = (
                 RentalQuote.Status.APPROVED
@@ -52,15 +65,10 @@ class RentalInspectionSerializer(serializers.ModelSerializer):
             if self.instance.quote.status != expected_status:
                 raise serializers.ValidationError("Esta inspeção não está disponível na etapa atual da locação.")
         result = attrs.get("result", getattr(self.instance, "result", RentalInspection.Result.PENDING))
-        checklist = attrs.get("checklist", getattr(self.instance, "checklist", []))
         condition = attrs.get("condition", getattr(self.instance, "condition", RentalInspection.Condition.GOOD))
         critical = attrs.get("critical_impediment", getattr(self.instance, "critical_impediment", False))
-        if result != RentalInspection.Result.PENDING:
-            pending = [item for item in checklist if item.get("status") not in {"OK", "WARNING", "FAIL", "NA"}]
-            if pending:
-                raise serializers.ValidationError({"checklist": "Conclua todos os itens antes de finalizar a inspeção."})
-        if critical or condition == RentalInspection.Condition.CRITICAL or any(item.get("status") == "FAIL" for item in checklist):
-            attrs["critical_impediment"] = True
+        if result != RentalInspection.Result.PENDING and (critical or condition in {RentalInspection.Condition.DAMAGED, RentalInspection.Condition.CRITICAL}):
+            attrs["critical_impediment"] = critical or condition == RentalInspection.Condition.CRITICAL
             attrs["result"] = RentalInspection.Result.BLOCKED
         return attrs
 
@@ -79,7 +87,7 @@ class RentalInspectionSerializer(serializers.ModelSerializer):
                 if result in {RentalInspection.Result.APPROVED, RentalInspection.Result.APPROVED_WITH_NOTES}:
                     order.status = ServiceOrder.Status.COMPLETED
                     order.technician = actor
-                    order.final_tests = f"Checklist pré-locação concluído: {inspection.get_result_display()}."
+                    order.final_tests = f"Equipamento operante na avaliação pré-locação: {inspection.get_result_display()}."
                     order.released = True
                 elif result == RentalInspection.Result.BLOCKED:
                     order.status = ServiceOrder.Status.IN_PROGRESS
@@ -109,7 +117,7 @@ class RentalInspectionSerializer(serializers.ModelSerializer):
                 elif inspection.result in {RentalInspection.Result.APPROVED, RentalInspection.Result.APPROVED_WITH_NOTES}:
                     order.status = ServiceOrder.Status.COMPLETED
                     order.technician = actor
-                    order.final_tests = f"Checklist de devolução concluído: {inspection.get_result_display()}."
+                    order.final_tests = f"Equipamento operante na avaliação da devolução: {inspection.get_result_display()}."
                     order.released = True
                 else:
                     order.status = ServiceOrder.Status.OPEN

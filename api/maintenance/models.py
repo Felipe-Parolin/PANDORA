@@ -76,6 +76,8 @@ class ServiceOrder(models.Model):
     final_tests = models.TextField(blank=True)
     released = models.BooleanField(default=False)
     labor_hours = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+    labor_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    parts_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     parts_used = models.TextField(blank=True)
 
     class Meta:

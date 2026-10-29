@@ -1,10 +1,11 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { CalendarClock, CheckCircle2, ClipboardList, MapPin, Pencil, PlayCircle, Plus, Search, Trash2, Truck } from 'lucide-vue-next'
+import { CalendarClock, CheckCircle2, MapPin, Pencil, PlayCircle, Plus, Search, Trash2, Truck } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import ModalDialog from '../components/ModalDialog.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import WorkflowFilterSelect from '../components/WorkflowFilterSelect.vue'
 import { api, apiError, can, rows, shortDate } from '../services/api'
 
 const route = useRoute()
@@ -133,13 +134,11 @@ onMounted(async () => {
     <header class="page-heading compact"><div><span class="eyebrow">MOVIMENTAÇÃO DE EQUIPAMENTOS</span><h1>Transporte</h1><p>Planeje entregas e coletas apenas quando a locação precisar de veículo.</p></div><button v-if="tab === 'vehicles' && can('logistics.manage')" class="btn primary" @click="openVehicle()"><Plus :size="18" />Cadastrar veículo</button></header>
     <div v-if="notice" class="success-strip">{{ notice }}</div>
     <div v-if="error && !modal" class="floating-error">{{ error }}</div>
-    <section class="transport-flow"><span><ClipboardList :size="17" />Reserva</span><i /><span>Inspeção e manutenção</span><i /><span><Truck :size="17" />Transporte, se necessário</span><i /><span>Entrega / devolução</span></section>
     <div class="tabs section-tabs"><button :class="{ active: tab === 'trips' }" @click="tab = 'trips'"><MapPin :size="17" />Viagens</button><button :class="{ active: tab === 'vehicles' }" @click="tab = 'vehicles'"><Truck :size="17" />Veículos</button></div>
 
     <template v-if="tab === 'trips'">
-      <div class="workflow-tabs" role="tablist" aria-label="Filtrar viagens"><button v-for="item in queues" :key="item.key" :class="{ active: queue === item.key }" @click="queue = item.key"><span>{{ item.label }}</span><b>{{ item.count }}</b></button></div>
       <section class="panel list-panel">
-        <header class="list-toolbar"><div class="search-box"><Search :size="17" /><input v-model="search" placeholder="Buscar reserva, cliente ou placa" /></div><span class="result-count">{{ visibleTrips.length }} viagem(ns)</span></header>
+        <header class="list-toolbar workflow-list-toolbar"><div class="search-box"><Search :size="17" /><input v-model="search" placeholder="Buscar reserva, cliente ou placa" /></div><WorkflowFilterSelect v-model="queue" :options="queues" label="Situação da viagem" /><span class="result-count">{{ visibleTrips.length }} viagem(ns)</span></header>
         <div class="table-wrap desktop-list"><table><thead><tr><th>Locação</th><th>Trajeto</th><th>Agendamento</th><th>Veículo / motorista</th><th>Status</th><th class="right">Ações</th></tr></thead><tbody>
           <tr v-for="trip in visibleTrips" :key="trip.id"><td><strong>{{ trip.quote_number }}</strong><small>{{ trip.customer_name }}</small></td><td><strong>{{ trip.leg_label }}</strong><small>{{ trip.address }}<template v-if="trip.complement"> · {{ trip.complement }}</template></small></td><td>{{ trip.scheduled_at ? shortDate(trip.scheduled_at.slice(0, 10)) : 'A definir' }}</td><td><strong>{{ trip.vehicle_plate || 'Sem veículo' }}</strong><small>{{ trip.driver_name || 'Sem motorista' }}</small></td><td><StatusBadge :value="trip.status" :label="trip.status_label" /></td><td class="right"><div class="row-actions"><button v-if="can('logistics.manage') && trip.status === 'PLANNED'" class="icon-btn table-action" title="Planejar viagem" @click="openTrip(trip)"><Pencil :size="17" /></button><button v-if="can('logistics.manage') && trip.status === 'PLANNED'" class="icon-btn success-action" title="Iniciar transporte" :disabled="busy" @click="transition(trip, 'start')"><PlayCircle :size="17" /></button><button v-if="can('logistics.manage') && trip.status === 'IN_TRANSIT'" class="icon-btn success-action" title="Concluir transporte" :disabled="busy" @click="transition(trip, 'complete')"><CheckCircle2 :size="17" /></button></div></td></tr>
           <tr v-if="!visibleTrips.length"><td colspan="6" class="empty-cell"><Truck :size="20" />Nenhuma viagem nesta fila.</td></tr>

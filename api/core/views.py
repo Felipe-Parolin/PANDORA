@@ -18,6 +18,7 @@ from rentals.models import RentalQuote
 from accounts.permissions import ACLPermission
 from .models import Notification
 from .serializers import NotificationSerializer
+from .patterns import AIService
 
 
 class HealthView(APIView):
@@ -51,6 +52,7 @@ class DashboardView(APIView):
             "active_quotes": RentalQuote.objects.filter(status__in=[RentalQuote.Status.DRAFT, RentalQuote.Status.SENT, RentalQuote.Status.APPROVED, RentalQuote.Status.ACTIVE, RentalQuote.Status.RETURNED]).count(),
             "quotes_total": quotes_total,
             "recent_quotes": list(RentalQuote.objects.select_related("customer").values("id", "number", "customer__name", "status", "total", "created_at")[:5]),
+            "purchase_suggestion": AIService().suggest_purchase(),
         })
 
 

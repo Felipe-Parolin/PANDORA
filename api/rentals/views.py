@@ -1,4 +1,6 @@
 from datetime import date, datetime, timedelta
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
@@ -10,11 +12,13 @@ from rest_framework.viewsets import ModelViewSet
 from accounts.permissions import ACLPermission
 from assets.models import Equipment
 from assets.serializers import EquipmentSerializer
+from customers.models import Customer
 from core.models import AuditLog
 from maintenance.models import ServiceOrder
 from logistics.models import TransportTask
 from logistics.services import ensure_transport_task, transport_completed
-from .models import RentalExtension, RentalInspection, RentalQuote
+from .models import RentalDocument, RentalExtension, RentalInspection, RentalQuote, UnmetRentalDemand
+from .documents import render_document_pdf, snapshot_for, snapshot_hash
 from .freight import estimate_freight, lookup_cep
 from .serializers import RentalInspectionSerializer, RentalQuoteSerializer
 from .services import availability_reason, ensure_inspections, ensure_pre_rental_orders, ensure_return_orders, refresh_equipment_status
@@ -63,6 +67,73 @@ class RentalQuoteViewSet(ModelViewSet):
         self._require_acl(request, "rentals.manage")
         address = lookup_cep(request.query_params.get("cep"))
         return Response({**address, "estimate": estimate_freight(address)})
+
+    @action(detail=True, methods=["get", "post"], url_path="documents")
+    def documents(self, request, pk=None):
+        quote = self.get_object()
+        if request.method == "GET":
+            history = quote.documents.select_related("created_by").order_by("kind", "-version")
+            return Response([{
+                "id": item.id, "kind": item.kind, "kind_label": item.get_kind_display(),
+                "version": item.version, "created_at": item.created_at,
+                "created_by_name": item.created_by.full_name,
+            } for item in history])
+        kind = request.data.get("kind")
+        if kind not in RentalDocument.Kind.values:
+            raise ValidationError({"kind": "Selecione orçamento, entrega ou devolução."})
+        if kind == RentalDocument.Kind.DELIVERY and not quote.delivered_at:
+            raise ValidationError({"kind": "Registre a entrega antes de gerar seu comprovante."})
+        if kind == RentalDocument.Kind.RETURN and not quote.returned_at:
+            raise ValidationError({"kind": "Registre a devolução antes de gerar seu comprovante."})
+        with transaction.atomic():
+            quote = RentalQuote.objects.select_for_update().get(pk=quote.pk)
+            snapshot = snapshot_for(quote, kind)
+            digest = snapshot_hash(snapshot)
+            last = quote.documents.filter(kind=kind).order_by("-version").first()
+            if last and last.content_hash == digest:
+                document, created = last, False
+            else:
+                document = RentalDocument.objects.create(
+                    quote=quote, kind=kind, version=(last.version + 1 if last else 1),
+                    snapshot=snapshot, content_hash=digest, created_by=request.user,
+                )
+                created = True
+                self._audit(request, quote, "DOCUMENT_CREATED", kind=kind, version=document.version)
+        return Response({"id": document.id, "kind": kind, "version": document.version, "created": created}, status=201 if created else 200)
+
+    @action(detail=True, methods=["get"], url_path=r"documents/(?P<document_id>\d+)/pdf")
+    def download_document(self, request, pk=None, document_id=None):
+        quote = self.get_object()
+        document = get_object_or_404(RentalDocument, quote=quote, pk=document_id)
+        if snapshot_hash(document.snapshot) != document.content_hash:
+            return Response({"detail": "O conteúdo deste documento não corresponde ao registro original."}, status=status.HTTP_409_CONFLICT)
+        filename = f"pandora-{quote.number.lower()}-{document.kind.lower()}-v{document.version}.pdf"
+        response = HttpResponse(render_document_pdf(document), content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    @action(detail=False, methods=["post"], url_path="unmet-demand")
+    def register_unmet_demand(self, request):
+        self._require_acl(request, "rentals.manage")
+        try:
+            start = date.fromisoformat(str(request.data["start_date"]))
+            end = date.fromisoformat(str(request.data["end_date"]))
+        except (KeyError, ValueError):
+            raise ValidationError({"dates": "Informe início e fim no formato AAAA-MM-DD."})
+        if end < start:
+            raise ValidationError({"end_date": "A data final deve ser igual ou posterior à inicial."})
+        equipment = get_object_or_404(Equipment, pk=request.data.get("equipment"))
+        customer = get_object_or_404(Customer, pk=request.data.get("customer"), is_active=True)
+        reason = availability_reason(equipment, start, end)
+        if not reason:
+            raise ValidationError({"equipment": "O equipamento está disponível neste período; não há procura não atendida."})
+        signal, created = UnmetRentalDemand.objects.get_or_create(
+            equipment=equipment, customer=customer, start_date=start, end_date=end,
+            defaults={"reason": reason, "created_by": request.user},
+        )
+        if created:
+            AuditLog.objects.create(user=request.user, entity="UnmetRentalDemand", record_id=str(signal.pk), action="CREATED", data={"equipment": equipment.internal_code, "reason": reason})
+        return Response({"id": signal.id, "created": created, "reason": signal.reason}, status=201 if created else 200)
 
     @transaction.atomic
     @action(detail=True, methods=["post"])
@@ -265,6 +336,8 @@ class RentalQuoteViewSet(ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         quote = self.get_object()
+        if quote.documents.exists():
+            return Response({"detail": "Há documentos versionados. Mantenha a locação para preservar o histórico."}, status=status.HTTP_409_CONFLICT)
         if quote.transport_tasks.exists():
             return Response({"detail": "Há viagens vinculadas. Mantenha a locação para preservar o histórico."}, status=status.HTTP_409_CONFLICT)
         if ServiceOrder.objects.filter(rental_inspection__quote=quote).exists():

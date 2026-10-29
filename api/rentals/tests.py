@@ -13,7 +13,7 @@ from accounts.models import AccessGroup, User
 from assets.models import Equipment, EquipmentCategory
 from customers.models import Customer
 from maintenance.models import MaintenancePlan, ServiceOrder
-from rentals.models import RentalInspection, RentalItem, RentalQuote
+from rentals.models import RentalDocument, RentalInspection, RentalItem, RentalQuote, UnmetRentalDemand
 from rentals.serializers import RentalQuoteSerializer
 from rentals.services import availability_reason
 from rentals.freight import estimate_freight, lookup_cep
@@ -52,6 +52,80 @@ class RentalRulesTests(TestCase):
         RentalItem.objects.create(quote=quote, equipment=self.equipment, daily_rate=100, quantity_days=3, total=300)
         self.assertIsNotNone(availability_reason(self.equipment, timezone.localdate() + timedelta(days=1), timezone.localdate() + timedelta(days=4)))
         self.assertIsNone(availability_reason(self.equipment, quote.start_date, quote.end_date, ignore_quote=quote))
+
+    def test_turnaround_buffer_blocks_adjacent_rental_but_not_later_dates(self):
+        self.equipment.turnaround_days = 2
+        self.equipment.save(update_fields=("turnaround_days",))
+        quote = self.create_quote(status=RentalQuote.Status.APPROVED)
+        next_day = quote.end_date + timedelta(days=1)
+        reason = availability_reason(self.equipment, next_day, next_day)
+        self.assertIn("Intervalo operacional de 2 dia", reason)
+        self.assertIsNone(availability_reason(self.equipment, quote.end_date + timedelta(days=3), quote.end_date + timedelta(days=3)))
+        self.assertIsNone(availability_reason(self.equipment, quote.start_date, quote.end_date, ignore_quote=quote))
+
+    def test_unmet_demand_is_explicit_validated_and_deduplicated(self):
+        quote = self.create_quote(status=RentalQuote.Status.APPROVED)
+        payload = {"equipment": self.equipment.pk, "customer": self.customer.pk,
+                   "start_date": quote.start_date.isoformat(), "end_date": quote.end_date.isoformat()}
+        first = self.client.post("/api/rental-quotes/unmet-demand/", payload, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertTrue(first.data["created"])
+        second = self.client.post("/api/rental-quotes/unmet-demand/", payload, format="json")
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertFalse(second.data["created"])
+        self.assertEqual(UnmetRentalDemand.objects.count(), 1)
+        payload["start_date"] = (quote.end_date + timedelta(days=2)).isoformat()
+        payload["end_date"] = payload["start_date"]
+        self.assertEqual(self.client.post("/api/rental-quotes/unmet-demand/", payload, format="json").status_code, 400)
+
+    def test_document_versions_are_immutable_and_receipts_require_events(self):
+        quote = self.create_quote()
+        quote.recalculate()
+        url = f"/api/rental-quotes/{quote.pk}/documents/"
+        first = self.client.post(url, {"kind": "QUOTE"}, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data["version"], 1)
+        repeated = self.client.post(url, {"kind": "QUOTE"}, format="json")
+        self.assertEqual(repeated.status_code, 200, repeated.data)
+        self.assertFalse(repeated.data["created"])
+        original_snapshot = RentalDocument.objects.get(pk=first.data["id"]).snapshot
+        quote.conditions = "Novas condições comerciais."
+        quote.save(update_fields=("conditions", "updated_at"))
+        revised = self.client.post(url, {"kind": "QUOTE"}, format="json")
+        self.assertEqual(revised.status_code, 201, revised.data)
+        self.assertEqual(revised.data["version"], 2)
+        self.assertNotEqual(original_snapshot["conditions"], RentalDocument.objects.get(pk=revised.data["id"]).snapshot["conditions"])
+        self.assertEqual(RentalDocument.objects.get(pk=first.data["id"]).snapshot, original_snapshot)
+        self.assertEqual(self.client.post(url, {"kind": "DELIVERY"}, format="json").status_code, 400)
+        self.assertEqual(self.client.post(url, {"kind": "RETURN"}, format="json").status_code, 400)
+        pdf = self.client.get(f"/api/rental-quotes/{quote.pk}/documents/{first.data['id']}/pdf/")
+        self.assertEqual(pdf.status_code, 200)
+        self.assertTrue(pdf.content.startswith(b"%PDF"))
+        self.assertEqual(self.client.delete(f"/api/rental-quotes/{quote.pk}/").status_code, 409)
+        tampered = RentalDocument.objects.get(pk=first.data["id"])
+        tampered.snapshot["conditions"] = "Alteração indevida"
+        tampered.save(update_fields=("snapshot",))
+        self.assertEqual(self.client.get(f"/api/rental-quotes/{quote.pk}/documents/{first.data['id']}/pdf/").status_code, 409)
+        self.client.force_authenticate(self.technician)
+        self.assertEqual(self.client.post(url, {"kind": "QUOTE"}, format="json").status_code, 403)
+
+    def test_receipts_can_be_generated_after_delivery_and_return(self):
+        quote = self.create_quote(status=RentalQuote.Status.ACTIVE)
+        quote.recalculate()
+        quote.delivered_at = timezone.now()
+        quote.delivered_by = self.user
+        quote.save(update_fields=("delivered_at", "delivered_by", "updated_at"))
+        url = f"/api/rental-quotes/{quote.pk}/documents/"
+        delivery = self.client.post(url, {"kind": "DELIVERY"}, format="json")
+        self.assertEqual(delivery.status_code, 201, delivery.data)
+        quote.returned_at = timezone.now()
+        quote.returned_by = self.user
+        quote.status = RentalQuote.Status.RETURNED
+        quote.save(update_fields=("returned_at", "returned_by", "status", "updated_at"))
+        returned = self.client.post(url, {"kind": "RETURN"}, format="json")
+        self.assertEqual(returned.status_code, 201, returned.data)
+        self.assertEqual(RentalDocument.objects.filter(quote=quote).count(), 2)
+        self.assertEqual(self.client.get(f"/api/rental-quotes/{quote.pk}/documents/{returned.data['id']}/pdf/").status_code, 200)
 
     def test_serializer_rejects_duplicate_equipment(self):
         payload = {
@@ -156,8 +230,6 @@ class RentalRulesTests(TestCase):
         mocked_urlopen.assert_called_once()
 
     def test_reservation_creates_pre_rental_inspection_and_responsible(self):
-        self.category.pre_rental_checklist = ["Trava da categoria", "Teste específico"]
-        self.category.save(update_fields=("pre_rental_checklist",))
         quote = self.create_quote()
         response = self.client.post(f"/api/rental-quotes/{quote.pk}/reserve/")
         self.assertEqual(response.status_code, 200, response.data)
@@ -167,7 +239,7 @@ class RentalRulesTests(TestCase):
         self.assertEqual(quote.reserved_by, self.user)
         self.assertEqual(self.equipment.status, Equipment.Status.RESERVED)
         inspection = quote.inspections.get(inspection_type=RentalInspection.Type.PRE_RENTAL)
-        self.assertEqual([item["label"] for item in inspection.checklist], self.category.pre_rental_checklist)
+        self.assertEqual(inspection.checklist, [])
         order = ServiceOrder.objects.get(rental_inspection=inspection)
         self.assertEqual(order.maintenance_type, ServiceOrder.Type.PRE_RENTAL)
         self.assertEqual(order.status, ServiceOrder.Status.OPEN)
@@ -233,6 +305,41 @@ class RentalRulesTests(TestCase):
         self.equipment.refresh_from_db()
         self.assertEqual(quote.status, RentalQuote.Status.ACTIVE)
         self.assertEqual(self.equipment.status, Equipment.Status.RENTED)
+
+    def test_pre_rental_decision_works_without_checklist_and_broken_equipment_cannot_be_approved(self):
+        quote = self.create_quote()
+        self.assertEqual(self.client.post(f"/api/rental-quotes/{quote.pk}/reserve/").status_code, 200)
+        inspection = quote.inspections.get(inspection_type=RentalInspection.Type.PRE_RENTAL)
+        self.client.force_authenticate(self.technician)
+        blocked = self.client.patch(
+            f"/api/rental-inspections/{inspection.pk}/",
+            {"equipment_decision": "BROKEN", "observations": "Motor não liga."},
+            format="json",
+        )
+        self.assertEqual(blocked.status_code, 200, blocked.data)
+        self.assertEqual(blocked.data["result"], RentalInspection.Result.BLOCKED)
+        self.assertEqual(blocked.data["operational_status"], "BROKEN")
+        self.assertEqual(ServiceOrder.objects.get(rental_inspection=inspection).status, ServiceOrder.Status.IN_PROGRESS)
+        self.client.force_authenticate(self.user)
+        self.assertEqual(self.client.post(f"/api/rental-quotes/{quote.pk}/deliver/").status_code, 400)
+
+    def test_operating_equipment_can_be_released_without_checklist(self):
+        quote = self.create_quote()
+        self.assertEqual(self.client.post(f"/api/rental-quotes/{quote.pk}/reserve/").status_code, 200)
+        inspection = quote.inspections.get(inspection_type=RentalInspection.Type.PRE_RENTAL)
+        inspection.checklist = [{"id": "historico", "label": "Verificação antiga", "status": "FAIL"}]
+        inspection.save(update_fields=("checklist",))
+        self.client.force_authenticate(self.technician)
+        approved = self.client.patch(
+            f"/api/rental-inspections/{inspection.pk}/",
+            {"equipment_decision": "OPERATING", "observations": "Funcionamento verificado."},
+            format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertEqual(approved.data["operational_status"], "OPERATING")
+        inspection.refresh_from_db()
+        self.assertEqual(inspection.checklist[0]["label"], "Verificação antiga")
+        self.assertTrue(ServiceOrder.objects.get(rental_inspection=inspection).released)
 
     def test_blocked_pre_rental_inspection_keeps_order_open_and_prevents_delivery(self):
         quote = self.create_quote()

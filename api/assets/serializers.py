@@ -18,6 +18,16 @@ class EquipmentSerializer(serializers.ModelSerializer):
         model = Equipment
         fields = "__all__"
 
+    def validate_turnaround_days(self, value):
+        if value > 30:
+            raise serializers.ValidationError("O intervalo operacional deve ser de até 30 dias.")
+        return value
+
+    def validate_acquisition_cost(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("O preço de aquisição não pode ser negativo.")
+        return value
+
 
 class MediaAssetSerializer(serializers.ModelSerializer):
     category_label = serializers.CharField(source="get_category_display", read_only=True)

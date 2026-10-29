@@ -41,13 +41,17 @@ A locação e a manutenção não dependem da disponibilidade de IA. Uma futura 
 11. Um chamado abandonado exige justificativa, mantém o equipamento bloqueado e fica disponível para redistribuição.
 12. A seleção de locação antecipa a mesma regra de disponibilidade reaplicada na aprovação.
 13. Cada equipamento reservado abre uma OS de pré-locação na Manutenção, vinculada à inspeção. A própria OS pendente não bloqueia sua reserva; outras OS abertas continuam bloqueando.
-14. A entrega exige checklist pré-locação aprovado e OS liberada para todos os itens. Falha crítica mantém a OS aberta e o equipamento bloqueado.
+14. A entrega exige avaliação pré-locação **operante** e OS liberada para todos os itens. Equipamento **quebrado** mantém a OS aberta e o uso bloqueado.
 15. A prorrogação repete a verificação de disponibilidade e preserva o histórico de datas e condições.
 16. A devolução mantém o equipamento indisponível até a inspeção final; avarias geram OS pós-locação.
 17. Planos podem vencer por data ou horas de uso, com faixas de aviso configuráveis.
 18. A opção de transporte é definida no orçamento; o preço do frete entra no total recalculado no servidor.
 19. A viagem de entrega só inicia após inspeção e OS pré-locação liberadas, e a entrega só é registrada após a viagem concluída.
 20. Quando há coleta contratada, a devolução só é registrada após a viagem de retorno concluída. Veículos em viagem não podem ser atribuídos a outra viagem.
+21. O intervalo operacional de cada equipamento amplia a janela de conflito em ambos os lados da reserva, inclusive na prorrogação.
+22. A procura não atendida só é registrada por ação explícita, com cliente e período indisponível, e não pela mera visualização da disponibilidade.
+23. Orçamento e comprovantes preservam snapshots versionados; o PDF é gerado a partir do snapshot e verificado por hash. Um orçamento com documentos não pode ser excluído.
+24. A sugestão de compra é uma heurística explicável baseada em 180 dias de solicitações, ocupação, procura não atendida e custo de manutenção em relação ao preço de aquisição.
 
 ## Ciclo da locação
 
@@ -57,7 +61,7 @@ Rascunho/Enviado → Reservado → Inspeção pré-locação → [Transporte de 
         └──────────────┴──→ Cancelado (antes da entrega)
 ```
 
-Cada transição operacional registra usuário, data, condições e `AuditLog`. Inspeções são individuais por equipamento e usam o modelo configurado em sua categoria.
+Cada transição operacional registra usuário, data, condições e `AuditLog`. As avaliações são individuais por equipamento; a decisão operante/quebrado é adaptada aos campos históricos de inspeção sem apagar registros antigos.
 
 ## Padrões criacionais da modelagem
 
@@ -68,12 +72,16 @@ Cada transição operacional registra usuário, data, condições e `AuditLog`. 
 
 Esses padrões ficam no serviço de aplicação, sem duplicar as entidades de domínio.
 
+## Padrão estrutural da avaliação
+
+`rentals.adapters.InspectionDecisionAdapter` traduz a decisão operacional simples (`OPERATING`/`BROKEN`) para os campos persistidos de condição e resultado da inspeção. O serializer usa o adaptador tanto na escrita quanto na leitura (`operational_status`). Isso permite retirar o checklist do fluxo atual e manter a compatibilidade com inspeções históricas, sem migração destrutiva. O dashboard usa `core.recommendations` para gerar uma sugestão explicável de compra a partir de solicitações e disponibilidade; não chama um modelo externo de IA.
+
 A correspondência detalhada entre os diagramas acadêmicos e as classes Python está em [Rastreabilidade dos padrões](PATTERN_TRACEABILITY.md).
 
 ## Evolução recomendada
 
 - trocar `MEDIA_ROOT` por armazenamento de objetos com verificação antimalware;
 - adicionar trilha automática para CRUD genérico por middleware, complementando os eventos de locação;
-- criar PDF versionado do orçamento e fluxo de aceite;
+- implementar aceite eletrônico assinado dos PDFs comerciais e validação jurídica do fluxo;
 - adotar tarefas assíncronas para relatórios, transcrição e IA;
 - incluir OpenAPI/Swagger, testes de integração concorrente e CI no GitHub Actions.

@@ -2,13 +2,12 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  AlertCircle, CalendarRange, Check, CheckCircle2,
-  ClipboardCheck, Clock3, PackageCheck, Pencil, Plus, RotateCcw, Search, Trash2,
-  Truck, XCircle, Route,
+  AlertCircle, CalendarRange, Check, CheckCircle2, Clock3, Plus, Search, Trash2,
 } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import ModalDialog from '../components/ModalDialog.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import WorkflowFilterSelect from '../components/WorkflowFilterSelect.vue'
 import { api, apiError, can, money, rows, shortDate } from '../services/api'
 
 const quotes = ref([])
@@ -20,7 +19,6 @@ const deleting = ref(null)
 const error = ref('')
 const busy = ref(false)
 const statusFilter = ref('ALL')
-const quoteSearch = ref('')
 const equipmentSearch = ref('')
 const availableEquipment = ref([])
 const blockedEquipment = ref([])
@@ -36,9 +34,14 @@ const freightManuallyEdited = ref(false)
 const operation = ref(null)
 const operationQuote = ref(null)
 const flowQuote = ref(null)
+const flowAction = ref('')
+const documents = ref([])
+const documentBusy = ref('')
+const documentError = ref('')
+const recordedDemand = ref([])
+const demandBusy = ref(null)
+const demandFeedback = ref('')
 const notice = ref('')
-const transportShortcut = ref('')
-const maintenanceShortcut = ref('')
 const operationForm = reactive({ date: '', conditions: '', new_end_date: '', reason: '' })
 
 const form = reactive({ customer: '', start_date: '', end_date: '', status: 'DRAFT', conditions: '', discount: 0, notes: '', items: [], delivery_transport_required: false, return_transport_required: false, delivery_address: '', return_address: '', delivery_complement: '', return_complement: '', delivery_cep: '', return_cep: '', transport_fee: 0 })
@@ -76,10 +79,7 @@ const statusTabs = computed(() => [
   { key: 'COMPLETED', label: 'Concluídas' },
   { key: 'CLOSED', label: 'Canceladas' },
 ].map(item => ({ ...item, count: quotes.value.filter(quote => tabMatches(quote, item.key)).length })))
-const filteredQuotes = computed(() => {
-  const term = quoteSearch.value.trim().toLocaleLowerCase('pt-BR')
-  return quotes.value.filter(quote => tabMatches(quote, statusFilter.value)).filter(quote => !term || [quote.number, quote.customer_name].some(value => String(value || '').toLocaleLowerCase('pt-BR').includes(term)))
-})
+const filteredQuotes = computed(() => quotes.value.filter(quote => tabMatches(quote, statusFilter.value)))
 const visibleAvailable = computed(() => {
   const term = equipmentSearch.value.trim().toLocaleLowerCase('pt-BR')
   return availableEquipment.value.filter(item => !term || [item.name, item.internal_code, item.category_name].some(value => String(value || '').toLocaleLowerCase('pt-BR').includes(term)))
@@ -105,18 +105,129 @@ const inspectionProgress = (quote, type) => {
 }
 const taskFor = (quote, leg) => quote.transport_tasks?.find(task => task.leg === leg)
 const transportReady = (quote, leg) => !(leg === 'DELIVERY' ? quote.delivery_transport_required : quote.return_transport_required) || taskFor(quote, leg)?.status === 'COMPLETED'
-const inspectionsReleased = quote => inspectionProgress(quote, 'PRE_RENTAL').done === inspectionProgress(quote, 'PRE_RENTAL').total && !quote.inspections.some(item => item.inspection_type === 'PRE_RENTAL' && quote.items.some(line => line.equipment === item.equipment) && item.result === 'BLOCKED')
+const inspectionsReleased = quote => quote.items.length > 0 && inspectionProgress(quote, 'PRE_RENTAL').done === inspectionProgress(quote, 'PRE_RENTAL').total && !quote.inspections.some(item => item.inspection_type === 'PRE_RENTAL' && quote.items.some(line => line.equipment === item.equipment) && item.result === 'BLOCKED')
+function guidanceFor(quote) {
+  if (['DRAFT', 'SENT'].includes(quote.status) && !quote.items.length) return { title: 'Orçamento incompleto', detail: 'Adicione ao menos um equipamento para aprovar a reserva.', action: 'edit', blocked: true }
+  if (['DRAFT', 'SENT'].includes(quote.status) && !quote.conditions?.trim()) return { title: 'Faltam condições comerciais', detail: 'Preencha as condições do orçamento antes da aprovação.', action: 'edit', blocked: true }
+  if (['DRAFT', 'SENT'].includes(quote.status)) return can('rentals.approve')
+    ? { title: 'Aprovar e reservar', detail: 'Confirme o orçamento para gerar a reserva e as OS de pré-locação.', action: 'reserve', blocked: false }
+    : { title: 'Aguardando aprovação', detail: 'Um usuário de vendas com permissão deve aprovar este orçamento.', action: '', blocked: true }
+  if (quote.status === 'APPROVED') {
+    const pre = quote.inspections.filter(item => item.inspection_type === 'PRE_RENTAL' && quote.items.some(line => line.equipment === item.equipment))
+    const broken = pre.filter(item => item.result === 'BLOCKED')
+    const pending = quote.items.length - pre.filter(item => item.result !== 'PENDING').length
+    if (broken.length) return { title: 'Entrega bloqueada', detail: `${broken.map(item => item.internal_code).join(', ')} quebrado(s). A Manutenção deve reparar e reavaliar antes da entrega.`, action: 'deliver', blocked: true }
+    if (pending > 0) return { title: 'Aguardando Manutenção', detail: `${pending} equipamento(s) ainda precisam da avaliação pré-locação.`, action: 'deliver', blocked: true }
+    if (quote.delivery_transport_required && !transportReady(quote, 'DELIVERY')) return { title: 'Aguardando transporte', detail: 'A viagem de entrega deve ser concluída antes de registrar a entrega.', action: 'deliver', blocked: true }
+    return can('rentals.dispatch')
+      ? { title: 'Registrar entrega', detail: 'Equipamentos liberados; registre a saída para iniciar a locação.', action: 'deliver', blocked: false }
+      : { title: 'Aguardando entrega', detail: 'Um usuário autorizado deve registrar a entrega.', action: '', blocked: true }
+  }
+  if (quote.status === 'ACTIVE') {
+    if (quote.return_transport_required && !transportReady(quote, 'RETURN')) return { title: 'Aguardando coleta', detail: 'Conclua a viagem de coleta no Transporte antes da devolução.', action: 'return', blocked: true }
+    return can('rentals.return')
+      ? { title: 'Registrar devolução', detail: 'Receba o equipamento e abra a avaliação final na Manutenção.', action: 'return', blocked: false }
+      : { title: 'Aguardando devolução', detail: 'Um usuário autorizado deve registrar o retorno.', action: '', blocked: true }
+  }
+  if (quote.status === 'RETURNED') {
+    const remaining = quote.items.length - inspectionProgress(quote, 'RETURN').done
+    if (remaining > 0) return { title: 'Aguardando Manutenção', detail: `${remaining} equipamento(s) ainda precisam da avaliação final.`, action: 'finalize', blocked: true }
+    return can('rentals.return')
+      ? { title: 'Concluir devolução', detail: 'Todas as avaliações finais foram registradas.', action: 'finalize', blocked: false }
+      : { title: 'Aguardando conclusão', detail: 'Um usuário autorizado deve concluir a devolução.', action: '', blocked: true }
+  }
+  return { title: quote.status === 'COMPLETED' ? 'Locação concluída' : 'Fluxo encerrado', detail: 'Nenhuma ação operacional pendente.', action: '', blocked: false }
+}
 function flowSteps(quote) {
   const stage = quote.status
   return [
-    { label: 'Orçamento e reserva', detail: stage === 'DRAFT' || stage === 'SENT' ? 'Aguardando aprovação' : 'Reserva confirmada', done: !['DRAFT', 'SENT', 'CANCELLED', 'EXPIRED'].includes(stage), link: null },
-    { label: 'Inspeção pré-locação', detail: `${inspectionProgress(quote, 'PRE_RENTAL').done}/${inspectionProgress(quote, 'PRE_RENTAL').total} equipamento(s)`, done: quote.items.length > 0 && inspectionsReleased(quote), link: can('maintenance.view') ? { name: 'maintenance', query: { quote: quote.number } } : null },
-    ...(quote.delivery_transport_required ? [{ label: 'Transporte de entrega', detail: taskFor(quote, 'DELIVERY')?.status_label || 'Após a reserva', done: transportReady(quote, 'DELIVERY'), link: can('logistics.view') ? { name: 'logistics', query: { quote: quote.number } } : null }] : []),
-    { label: 'Entrega e locação', detail: quote.delivered_at ? shortDate(quote.delivered_at.slice(0, 10)) : 'Aguardando entrega', done: ['ACTIVE', 'RETURNED', 'COMPLETED'].includes(stage), link: null },
-    ...(quote.return_transport_required ? [{ label: 'Coleta de devolução', detail: taskFor(quote, 'RETURN')?.status_label || 'Após a entrega', done: transportReady(quote, 'RETURN'), link: can('logistics.view') ? { name: 'logistics', query: { quote: quote.number } } : null }] : []),
-    { label: 'Inspeção final na manutenção', detail: `${inspectionProgress(quote, 'RETURN').done}/${inspectionProgress(quote, 'RETURN').total} equipamento(s)`, done: inspectionProgress(quote, 'RETURN').total > 0 && inspectionProgress(quote, 'RETURN').done === inspectionProgress(quote, 'RETURN').total, link: can('maintenance.view') && ['RETURNED', 'COMPLETED'].includes(stage) ? { name: 'maintenance', query: { quote: quote.number } } : null },
-    { label: 'Conclusão da devolução', detail: stage === 'COMPLETED' ? 'Locação concluída' : 'Após a inspeção final', done: stage === 'COMPLETED', link: null },
+    { label: 'Orçamento e reserva', detail: stage === 'DRAFT' || stage === 'SENT' ? 'Aguardando aprovação' : 'Reserva confirmada', done: !['DRAFT', 'SENT', 'CANCELLED', 'EXPIRED'].includes(stage) },
+    { label: 'Avaliação pré-locação', detail: `${inspectionProgress(quote, 'PRE_RENTAL').done}/${inspectionProgress(quote, 'PRE_RENTAL').total} equipamento(s) · Manutenção`, done: quote.items.length > 0 && inspectionsReleased(quote) },
+    ...(quote.delivery_transport_required ? [{ label: 'Transporte de entrega', detail: taskFor(quote, 'DELIVERY')?.status_label || 'Após a reserva', done: transportReady(quote, 'DELIVERY') }] : []),
+    { label: 'Entrega e locação', detail: quote.delivered_at ? shortDate(quote.delivered_at.slice(0, 10)) : 'Aguardando entrega', done: ['ACTIVE', 'RETURNED', 'COMPLETED'].includes(stage) },
+    ...(quote.return_transport_required ? [{ label: 'Coleta de devolução', detail: taskFor(quote, 'RETURN')?.status_label || 'Após a entrega', done: transportReady(quote, 'RETURN') }] : []),
+    { label: 'Avaliação final', detail: `${inspectionProgress(quote, 'RETURN').done}/${inspectionProgress(quote, 'RETURN').total} equipamento(s) · Manutenção`, done: inspectionProgress(quote, 'RETURN').total > 0 && inspectionProgress(quote, 'RETURN').done === inspectionProgress(quote, 'RETURN').total },
+    { label: 'Conclusão da devolução', detail: stage === 'COMPLETED' ? 'Locação concluída' : 'Após a avaliação final', done: stage === 'COMPLETED' },
   ]
+}
+
+function actionsFor(quote) {
+  const actions = []
+  if (can('rentals.manage') && ['DRAFT', 'SENT'].includes(quote.status)) actions.push({ key: 'edit', label: 'Editar orçamento' })
+  if (can('rentals.approve') && ['DRAFT', 'SENT'].includes(quote.status)) actions.push({ key: 'reserve', label: 'Aprovar e reservar' })
+  if (can('rentals.dispatch') && quote.status === 'APPROVED') actions.push({ key: 'deliver', label: 'Registrar entrega', disabled: !inspectionsReleased(quote) || !transportReady(quote, 'DELIVERY'), reason: 'Aguarde a avaliação pré-locação e, se necessário, o transporte de entrega.' })
+  if (can('rentals.extend') && ['APPROVED', 'ACTIVE'].includes(quote.status)) actions.push({ key: 'extend', label: 'Prorrogar locação' })
+  if (can('rentals.return') && quote.status === 'ACTIVE') actions.push({ key: 'return', label: 'Registrar devolução', disabled: !transportReady(quote, 'RETURN'), reason: 'Aguarde a coleta pelo Transporte.' })
+  if (can('rentals.return') && quote.status === 'RETURNED') actions.push({ key: 'finalize', label: 'Concluir devolução', disabled: inspectionProgress(quote, 'RETURN').done !== inspectionProgress(quote, 'RETURN').total, reason: 'Aguarde a avaliação final na Manutenção.' })
+  if (can('rentals.manage') && ['DRAFT', 'SENT', 'APPROVED'].includes(quote.status)) actions.push({ key: 'cancel', label: 'Cancelar locação' })
+  if (can('rentals.manage') && ['DRAFT', 'SENT', 'CANCELLED', 'EXPIRED'].includes(quote.status)) actions.push({ key: 'delete', label: 'Excluir orçamento' })
+  return actions
+}
+const selectedFlowAction = computed(() => actionsFor(flowQuote.value || { status: '', inspections: [], items: [] }).find(item => item.key === flowAction.value))
+watch(flowQuote, async quote => {
+  flowAction.value = quote && !guidanceFor(quote).blocked ? guidanceFor(quote).action : ''
+  documents.value = []
+  documentError.value = ''
+  if (quote) {
+    try {
+      const { data } = await api.get(`/rental-quotes/${quote.id}/documents/`)
+      if (flowQuote.value?.id === quote.id) documents.value = data
+    } catch (event) { if (flowQuote.value?.id === quote.id) documentError.value = apiError(event) }
+  }
+})
+function demandKey(item) { return `${form.customer}-${form.start_date}-${form.end_date}-${item.equipment.id}` }
+async function registerDemand(item) {
+  if (!form.customer || !datesValid.value) { demandFeedback.value = 'Selecione cliente e período antes de registrar a procura.'; return }
+  demandBusy.value = item.equipment.id
+  demandFeedback.value = ''
+  try {
+    const { data } = await api.post('/rental-quotes/unmet-demand/', {
+      equipment: item.equipment.id, customer: form.customer,
+      start_date: form.start_date, end_date: form.end_date,
+    })
+    recordedDemand.value.push(demandKey(item))
+    demandFeedback.value = data.created ? 'Procura não atendida registrada para análise de compras.' : 'Esta procura já estava registrada.'
+  } catch (event) { demandFeedback.value = apiError(event) }
+  finally { demandBusy.value = null }
+}
+async function downloadDocument(quote, item) {
+  documentBusy.value = `${item.kind}-${item.version}`
+  documentError.value = ''
+  try {
+    const { data } = await api.get(`/rental-quotes/${quote.id}/documents/${item.id}/pdf/`, { responseType: 'blob' })
+    const url = URL.createObjectURL(new Blob([data], { type: 'application/pdf' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `pandora-${quote.number.toLowerCase()}-${item.kind.toLowerCase()}-v${item.version}.pdf`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (event) { documentError.value = apiError(event) }
+  finally { documentBusy.value = '' }
+}
+async function createDocument(quote, kind) {
+  documentBusy.value = kind
+  documentError.value = ''
+  try {
+    const { data } = await api.post(`/rental-quotes/${quote.id}/documents/`, { kind })
+    const history = await api.get(`/rental-quotes/${quote.id}/documents/`)
+    documents.value = history.data
+    const item = documents.value.find(entry => entry.id === data.id)
+    if (item) await downloadDocument(quote, item)
+  } catch (event) { documentError.value = apiError(event) }
+  finally { documentBusy.value = '' }
+}
+function executeFlowAction() {
+  const quote = flowQuote.value
+  const action = selectedFlowAction.value
+  if (!quote || !action || action.disabled) return
+  flowQuote.value = null
+  if (action.key === 'edit') open(quote)
+  else if (action.key === 'reserve') reserve(quote)
+  else if (action.key === 'finalize') finalizeReturn(quote)
+  else if (action.key === 'delete') deleting.value = quote
+  else openOperation(action.key, quote)
 }
 
 function localDateTime() {
@@ -140,12 +251,9 @@ async function reserve(quote) {
   busy.value = true
   error.value = ''
   notice.value = ''
-  transportShortcut.value = ''
-  maintenanceShortcut.value = ''
   try {
     await api.post(`/rental-quotes/${quote.id}/reserve/`)
     notice.value = `${quote.number} reservada. Chamados de inspeção pré-locação abertos na Manutenção.${quote.delivery_transport_required ? ' A viagem de entrega foi criada em Transporte.' : ''}`
-    transportShortcut.value = quote.delivery_transport_required ? quote.number : ''
     await load()
   } catch (event) { error.value = apiError(event) }
   finally { busy.value = false }
@@ -157,8 +265,6 @@ async function submitOperation() {
   busy.value = true
   error.value = ''
   notice.value = ''
-  transportShortcut.value = ''
-  maintenanceShortcut.value = ''
   const config = {
     deliver: { url: 'deliver', payload: { delivered_at: operationForm.date, conditions: operationForm.conditions }, message: 'Entrega registrada e equipamentos marcados como locados.' },
     extend: { url: 'extend', payload: { new_end_date: operationForm.new_end_date, conditions: operationForm.conditions }, message: 'Prorrogação registrada após nova validação de disponibilidade.' },
@@ -170,7 +276,6 @@ async function submitOperation() {
     operation.value = null
     operationQuote.value = null
     notice.value = config.message
-    if (kind === 'return') maintenanceShortcut.value = quote.number
     await load()
   } catch (event) { error.value = apiError(event) }
   finally { busy.value = false }
@@ -180,8 +285,6 @@ async function finalizeReturn(quote) {
   busy.value = true
   error.value = ''
   notice.value = ''
-  transportShortcut.value = ''
-  maintenanceShortcut.value = ''
   try {
     const { data } = await api.post(`/rental-quotes/${quote.id}/finalize-return/`)
     const routed = data.routed_to_maintenance || []
@@ -359,7 +462,6 @@ function showLinkedQuote() {
   const matched = quotes.value.find(quote => quote.number === String(route.query.quote))
   if (matched) {
     statusFilter.value = 'ALL'
-    quoteSearch.value = matched.number
     flowQuote.value = matched
   }
 }
@@ -373,7 +475,7 @@ onMounted(async () => {
 <template>
   <div class="page">
     <header class="page-heading compact"><div><span class="eyebrow">COMERCIAL</span><h1>Locações e orçamentos</h1><p>Disponibilidade antecipada, composição de preço e acompanhamento do funil.</p></div><button v-if="can('rentals.manage')" class="btn primary" @click="open()"><Plus :size="18" />Gerar orçamento</button></header>
-    <div v-if="notice" class="success-strip rental-success-strip"><span>{{ notice }}</span><router-link v-if="transportShortcut && can('logistics.view')" class="btn secondary" :to="{ name: 'logistics', query: { quote: transportShortcut } }"><Truck :size="16" />Ver em Transporte</router-link><router-link v-if="maintenanceShortcut && can('maintenance.view')" class="btn secondary" :to="{ name: 'maintenance', query: { quote: maintenanceShortcut } }"><ClipboardCheck :size="16" />Ver na Manutenção</router-link></div>
+    <div v-if="notice" class="success-strip rental-success-strip"><span>{{ notice }}</span></div>
     <div v-if="error && !modal && !operation" class="floating-error">{{ error }}</div>
 
     <section class="quote-summary">
@@ -382,48 +484,19 @@ onMounted(async () => {
       <div><span class="eyebrow">CONVERSÃO</span><strong>{{ quotes.length ? Math.round(quotes.filter(quote => ['APPROVED', 'ACTIVE', 'RETURNED', 'COMPLETED'].includes(quote.status)).length / quotes.length * 100) : 0 }}%</strong><p>orçamentos convertidos em reserva</p></div>
     </section>
 
-    <div class="workflow-tabs quote-tabs" role="tablist" aria-label="Filtrar orçamentos por status"><button v-for="item in statusTabs" :key="item.key" :class="{ active: statusFilter === item.key }" @click="statusFilter = item.key"><span>{{ item.label }}</span><b>{{ item.count }}</b></button></div>
-
     <section class="panel list-panel">
-      <header class="list-toolbar"><div class="search-box"><Search :size="17" /><input v-model="quoteSearch" placeholder="Buscar por número ou cliente" /></div><span class="result-count">{{ filteredQuotes.length }} orçamento(s)</span></header>
-      <div class="table-wrap desktop-list"><table><thead><tr><th>Orçamento</th><th>Cliente</th><th>Período</th><th>Itens</th><th>Status</th><th class="right">Total</th><th class="right">Ações</th></tr></thead><tbody>
+      <header class="list-toolbar workflow-list-toolbar"><WorkflowFilterSelect v-model="statusFilter" :options="statusTabs" label="Etapa da locação" /><span class="result-count">{{ filteredQuotes.length }} orçamento(s)</span></header>
+      <div class="table-wrap desktop-list"><table><thead><tr><th>Orçamento</th><th>Cliente</th><th>Período</th><th>Itens</th><th>Status</th><th>Próxima ação</th><th class="right">Total</th><th class="right">Ações</th></tr></thead><tbody>
         <tr v-for="quote in filteredQuotes" :key="quote.id">
           <td><strong>{{ quote.number }}</strong><small>{{ shortDate(quote.created_at?.slice(0, 10)) }} · {{ quote.created_by_name }}</small></td>
           <td>{{ quote.customer_name }}</td><td>{{ shortDate(quote.start_date) }} → {{ shortDate(quote.end_date) }}</td><td>{{ quote.items.length }} equipamento(s)</td>
           <td><StatusBadge :value="quote.status" :label="quote.status_label" /><small v-if="quote.status === 'APPROVED'">Manutenção · pré-inspeção {{ inspectionProgress(quote, 'PRE_RENTAL').done }}/{{ inspectionProgress(quote, 'PRE_RENTAL').total }}</small><small v-if="quote.status === 'RETURNED'">Manutenção · inspeção final {{ inspectionProgress(quote, 'RETURN').done }}/{{ inspectionProgress(quote, 'RETURN').total }}</small><small v-if="quote.delivery_transport_required || quote.return_transport_required">Transporte {{ quote.delivery_transport_required && quote.return_transport_required ? 'ida e volta' : quote.delivery_transport_required ? 'de entrega' : 'de coleta' }}</small></td>
+          <td><div class="rental-next-step" :class="{ blocked: guidanceFor(quote).blocked }"><strong>{{ guidanceFor(quote).title }}</strong><small>{{ guidanceFor(quote).detail }}</small></div></td>
           <td class="right"><strong>{{ money(quote.total) }}</strong></td>
-          <td class="right"><div class="row-actions rental-row-actions">
-            <button class="icon-btn table-action" title="Ver fluxo da locação" @click="flowQuote = quote"><Route :size="17" /></button>
-            <button v-if="can('rentals.manage') && ['DRAFT', 'SENT'].includes(quote.status)" class="icon-btn table-action" title="Editar orçamento" @click="open(quote)"><Pencil :size="17" /></button>
-            <button v-if="can('rentals.approve') && ['DRAFT', 'SENT'].includes(quote.status)" class="icon-btn success-action" title="Aprovar e reservar" :disabled="busy" @click="reserve(quote)"><PackageCheck :size="17" /></button>
-            <router-link v-if="can('maintenance.view') && quote.status === 'APPROVED'" class="icon-btn table-action" title="Ver chamados de pré-locação na manutenção" :to="{ name: 'maintenance', query: { quote: quote.number } }"><ClipboardCheck :size="17" /></router-link>
-            <router-link v-if="can('logistics.view') && quote.status === 'APPROVED' && quote.delivery_transport_required" class="icon-btn table-action" title="Planejar transporte de entrega" :to="{ name: 'logistics', query: { quote: quote.number } }"><Truck :size="17" /></router-link>
-            <button v-if="can('rentals.dispatch') && quote.status === 'APPROVED'" class="icon-btn success-action" :title="!transportReady(quote, 'DELIVERY') ? 'Conclua a viagem de entrega' : 'Registrar entrega'" :disabled="!inspectionsReleased(quote) || !transportReady(quote, 'DELIVERY')" @click="openOperation('deliver', quote)"><PackageCheck :size="17" /></button>
-            <button v-if="can('rentals.extend') && ['APPROVED', 'ACTIVE'].includes(quote.status)" class="icon-btn table-action" title="Prorrogar locação" @click="openOperation('extend', quote)"><CalendarRange :size="17" /></button>
-            <router-link v-if="can('logistics.view') && quote.status === 'ACTIVE' && quote.return_transport_required" class="icon-btn table-action" title="Planejar coleta de devolução" :to="{ name: 'logistics', query: { quote: quote.number } }"><Truck :size="17" /></router-link>
-            <button v-if="can('rentals.return') && quote.status === 'ACTIVE'" class="icon-btn table-action" :title="!transportReady(quote, 'RETURN') ? 'Conclua a coleta de devolução' : 'Registrar devolução'" :disabled="!transportReady(quote, 'RETURN')" @click="openOperation('return', quote)"><RotateCcw :size="17" /></button>
-            <router-link v-if="can('maintenance.view') && ['RETURNED', 'COMPLETED'].includes(quote.status)" class="icon-btn table-action" title="Ver inspeção final na manutenção" :to="{ name: 'maintenance', query: { quote: quote.number } }"><ClipboardCheck :size="17" /></router-link>
-            <button v-if="can('rentals.return') && quote.status === 'RETURNED'" class="icon-btn success-action" title="Concluir devolução" :disabled="inspectionProgress(quote, 'RETURN').done !== inspectionProgress(quote, 'RETURN').total" @click="finalizeReturn(quote)"><CheckCircle2 :size="17" /></button>
-            <button v-if="can('rentals.manage') && ['DRAFT', 'SENT', 'APPROVED'].includes(quote.status)" class="icon-btn danger-icon" title="Cancelar" @click="openOperation('cancel', quote)"><XCircle :size="17" /></button>
-            <button v-if="can('rentals.manage') && ['DRAFT', 'SENT', 'CANCELLED', 'EXPIRED'].includes(quote.status)" class="icon-btn danger-icon" title="Excluir" @click="deleting = quote"><Trash2 :size="17" /></button>
-          </div></td>
-        </tr><tr v-if="!filteredQuotes.length"><td colspan="7" class="empty-cell">Nenhuma locação nesta etapa.</td></tr>
+          <td class="right"><button class="btn secondary rental-open-button" @click="flowQuote = quote">Abrir locação</button></td>
+        </tr><tr v-if="!filteredQuotes.length"><td colspan="8" class="empty-cell">Nenhuma locação nesta etapa.</td></tr>
       </tbody></table></div>
-      <div class="mobile-card-list"><article v-for="quote in filteredQuotes" :key="quote.id" class="mobile-record-card rental-mobile-card"><header><div><span class="eyebrow">{{ quote.number }}</span><strong>{{ quote.customer_name }}</strong></div><StatusBadge :value="quote.status" :label="quote.status_label" /></header><dl><div><dt>Período</dt><dd>{{ shortDate(quote.start_date) }} → {{ shortDate(quote.end_date) }}</dd></div><div><dt>Equipamentos</dt><dd>{{ quote.items.length }}</dd></div><div><dt>Total</dt><dd><strong>{{ money(quote.total) }}</strong></dd></div></dl><footer>
-        <button class="btn secondary" @click="flowQuote = quote"><Route :size="15" />Ver fluxo</button>
-        <button v-if="can('rentals.manage') && ['DRAFT', 'SENT'].includes(quote.status)" class="btn secondary" @click="open(quote)"><Pencil :size="15" />Editar</button>
-        <button v-if="can('rentals.approve') && ['DRAFT', 'SENT'].includes(quote.status)" class="btn primary" @click="reserve(quote)"><PackageCheck :size="15" />Reservar</button>
-        <router-link v-if="can('maintenance.view') && quote.status === 'APPROVED'" class="btn secondary" :to="{ name: 'maintenance', query: { quote: quote.number } }"><ClipboardCheck :size="15" />Ver chamados</router-link>
-        <span v-else-if="quote.status === 'APPROVED'" class="rental-inspection-note">Pré-locação na Manutenção: {{ inspectionProgress(quote, 'PRE_RENTAL').done }}/{{ inspectionProgress(quote, 'PRE_RENTAL').total }}</span>
-        <router-link v-if="can('logistics.view') && quote.status === 'APPROVED' && quote.delivery_transport_required" class="btn secondary" :to="{ name: 'logistics', query: { quote: quote.number } }"><Truck :size="15" />Entrega · transporte</router-link>
-        <button v-if="can('rentals.dispatch') && quote.status === 'APPROVED'" class="btn primary" :disabled="!inspectionsReleased(quote) || !transportReady(quote, 'DELIVERY')" @click="openOperation('deliver', quote)"><PackageCheck :size="15" />Entregar</button>
-        <button v-if="can('rentals.extend') && ['APPROVED', 'ACTIVE'].includes(quote.status)" class="btn secondary" @click="openOperation('extend', quote)"><CalendarRange :size="15" />Prorrogar</button>
-        <router-link v-if="can('logistics.view') && quote.status === 'ACTIVE' && quote.return_transport_required" class="btn secondary" :to="{ name: 'logistics', query: { quote: quote.number } }"><Truck :size="15" />Coleta · transporte</router-link>
-        <button v-if="can('rentals.return') && quote.status === 'ACTIVE'" class="btn primary" :disabled="!transportReady(quote, 'RETURN')" @click="openOperation('return', quote)"><RotateCcw :size="15" />Devolver</button>
-        <router-link v-if="can('maintenance.view') && ['RETURNED', 'COMPLETED'].includes(quote.status)" class="btn secondary" :to="{ name: 'maintenance', query: { quote: quote.number } }"><ClipboardCheck :size="15" />Inspeção final · Manutenção</router-link>
-        <span v-else-if="quote.status === 'RETURNED'" class="rental-inspection-note">Inspeção final na Manutenção: {{ inspectionProgress(quote, 'RETURN').done }}/{{ inspectionProgress(quote, 'RETURN').total }}</span>
-        <button v-if="can('rentals.return') && quote.status === 'RETURNED'" class="btn primary" :disabled="inspectionProgress(quote, 'RETURN').done !== inspectionProgress(quote, 'RETURN').total" @click="finalizeReturn(quote)"><CheckCircle2 :size="15" />Concluir</button>
-      </footer></article></div>
+      <div class="mobile-card-list"><article v-for="quote in filteredQuotes" :key="quote.id" class="mobile-record-card rental-mobile-card"><header><div><span class="eyebrow">{{ quote.number }}</span><strong>{{ quote.customer_name }}</strong></div><StatusBadge :value="quote.status" :label="quote.status_label" /></header><dl><div><dt>Período</dt><dd>{{ shortDate(quote.start_date) }} → {{ shortDate(quote.end_date) }}</dd></div><div><dt>Equipamentos</dt><dd>{{ quote.items.length }}</dd></div><div><dt>Total</dt><dd><strong>{{ money(quote.total) }}</strong></dd></div></dl><div class="rental-next-step" :class="{ blocked: guidanceFor(quote).blocked }"><strong>{{ guidanceFor(quote).title }}</strong><small>{{ guidanceFor(quote).detail }}</small></div><footer><button class="btn secondary" @click="flowQuote = quote">Abrir locação</button></footer></article></div>
     </section>
 
     <ModalDialog v-if="modal" :title="editing ? `Editar ${editing.number}` : 'Novo orçamento de locação'" wide @close="modal = false">
@@ -435,7 +508,7 @@ onMounted(async () => {
         <section class="quote-editor-section"><header><div><h3>Equipamentos</h3><p>Selecione um ou mais itens disponíveis nesse período.</p></div><div class="search-box"><Search :size="16" /><input v-model="equipmentSearch" placeholder="Buscar equipamento" aria-label="Buscar equipamento" :disabled="!datesValid" /></div></header>
           <div v-if="!datesValid" class="quote-picker-placeholder">Informe as datas para consultar os equipamentos.</div>
           <div v-else-if="availabilityLoading" class="quote-picker-placeholder"><Clock3 :size="18" />Consultando disponibilidade...</div>
-          <template v-else-if="availabilityChecked"><div class="quote-stock-count"><CheckCircle2 :size="16" />{{ availableEquipment.length }} disponível(is) no período</div><div v-if="visibleAvailable.length" class="equipment-picker quote-editor-picker"><button v-for="item in visibleAvailable" :key="item.id" type="button" :aria-pressed="form.items.some(line => line.equipment_id === item.id)" :class="{ selected: form.items.some(line => line.equipment_id === item.id) }" @click="toggle(item)"><span class="select-check"><Check :size="15" /></span><div><strong>{{ item.name }}</strong><small>{{ item.internal_code }} · {{ item.category_name }}</small></div><b>{{ money(item.daily_rate) }}<small>/dia</small></b></button></div><p v-else class="quote-picker-placeholder">Nenhum equipamento encontrado. Tente outra busca ou período.</p><details v-if="visibleBlocked.length" class="blocked-equipment"><summary><AlertCircle :size="17" />{{ visibleBlocked.length }} indisponível(is) neste período</summary><article v-for="item in visibleBlocked" :key="item.equipment.id"><div><strong>{{ item.equipment.internal_code }} · {{ item.equipment.name }}</strong><span>{{ item.reason }}</span></div></article></details></template>
+          <template v-else-if="availabilityChecked"><div class="quote-stock-count"><CheckCircle2 :size="16" />{{ availableEquipment.length }} disponível(is) no período</div><div v-if="visibleAvailable.length" class="equipment-picker quote-editor-picker"><button v-for="item in visibleAvailable" :key="item.id" type="button" :aria-pressed="form.items.some(line => line.equipment_id === item.id)" :class="{ selected: form.items.some(line => line.equipment_id === item.id) }" @click="toggle(item)"><span class="select-check"><Check :size="15" /></span><div><strong>{{ item.name }}</strong><small>{{ item.internal_code }} · {{ item.category_name }}</small></div><b>{{ money(item.daily_rate) }}<small>/dia</small></b></button></div><p v-else class="quote-picker-placeholder">Nenhum equipamento encontrado. Tente outra busca ou período.</p><details v-if="visibleBlocked.length" class="blocked-equipment"><summary><AlertCircle :size="17" />{{ visibleBlocked.length }} indisponível(is) neste período</summary><article v-for="item in visibleBlocked" :key="item.equipment.id"><div><strong>{{ item.equipment.internal_code }} · {{ item.equipment.name }}</strong><span>{{ item.reason }}</span></div><button v-if="can('rentals.manage')" type="button" class="btn secondary" :disabled="!form.customer || demandBusy === item.equipment.id || recordedDemand.includes(demandKey(item))" @click="registerDemand(item)">{{ recordedDemand.includes(demandKey(item)) ? 'Procura registrada' : 'Registrar procura não atendida' }}</button></article><small v-if="!form.customer">Selecione um cliente para registrar uma procura não atendida.</small><p v-if="demandFeedback" class="demand-feedback">{{ demandFeedback }}</p></details></template>
         </section>
 
         <section class="quote-editor-section"><header><div><h3>Itens do orçamento</h3><p v-if="!form.items.length">Selecione um equipamento acima para começar.</p><p v-else>{{ form.items.length }} equipamento(s) · ajuste a diária se necessário.</p></div></header><div class="quote-lines"><div v-for="item in form.items" :key="item.equipment_id" class="quote-line"><div><strong>{{ item.name }}</strong><span>{{ item.code }} · {{ days }} diária(s)</span></div><label class="rate-editor"><span>Diária (R$)</span><input v-model="item.daily_rate" type="number" min="0" step="0.01" required /></label><strong>{{ money(Number(item.daily_rate) * days) }}</strong><button type="button" class="icon-btn" :aria-label="`Remover ${item.name}`" @click="toggle({ id: item.equipment_id })"><Trash2 :size="17" /></button></div></div><div v-if="selectedConflicts.length" class="quote-conflict"><AlertCircle :size="17" />{{ selectedConflicts.length }} item(ns) selecionado(s) ficaram indisponíveis após a troca de datas. Remova-os ou escolha outro período.</div></section>
@@ -452,8 +525,11 @@ onMounted(async () => {
     </ModalDialog>
     <ModalDialog v-if="flowQuote" :title="`Fluxo da locação · ${flowQuote.number}`" @close="flowQuote = null">
       <div class="operation-context"><span class="eyebrow">{{ flowQuote.customer_name }}</span><strong>{{ shortDate(flowQuote.start_date) }} → {{ shortDate(flowQuote.end_date) }}</strong><small>{{ flowQuote.items.length }} equipamento(s) · {{ money(flowQuote.total) }}</small></div>
-      <ol class="rental-flow-list"><li v-for="(item, index) in flowSteps(flowQuote)" :key="index" :class="{ done: item.done }"><span class="flow-step-icon"><Check v-if="item.done" :size="16" /><span v-else>{{ index + 1 }}</span></span><div><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></div><router-link v-if="item.link" class="btn secondary" :to="item.link" @click="flowQuote = null">Abrir</router-link></li></ol>
+      <div class="rental-guidance" :class="{ blocked: guidanceFor(flowQuote).blocked }"><span class="eyebrow">PRÓXIMA AÇÃO</span><strong>{{ guidanceFor(flowQuote).title }}</strong><p>{{ guidanceFor(flowQuote).detail }}</p></div>
+      <ol class="rental-flow-list"><li v-for="(item, index) in flowSteps(flowQuote)" :key="index" :class="{ done: item.done }"><span class="flow-step-icon"><Check v-if="item.done" :size="16" /><span v-else>{{ index + 1 }}</span></span><div><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></div></li></ol>
       <div v-if="flowQuote.status === 'CANCELLED'" class="period-callout">Reserva cancelada: {{ flowQuote.cancellation_reason }}</div>
+      <div v-if="actionsFor(flowQuote).length" class="rental-flow-actions"><label for="rental-flow-action">O que deseja fazer?</label><div><select id="rental-flow-action" v-model="flowAction"><option value="" disabled>Selecione uma ação</option><option v-for="action in actionsFor(flowQuote)" :key="action.key" :value="action.key" :disabled="action.disabled">{{ action.label }}</option></select><button class="btn primary" :disabled="!selectedFlowAction || selectedFlowAction.disabled || busy" @click="executeFlowAction">Continuar</button></div><small v-for="action in actionsFor(flowQuote).filter(item => item.disabled)" :key="action.key">{{ action.label }}: {{ action.reason }}</small></div>
+      <details class="rental-documents"><summary>Documentos comerciais e comprovantes</summary><p>PDFs versionados do registro no momento da geração. Não são documentos fiscais nem comprovantes assinados.</p><div v-if="can('rentals.manage')" class="rental-document-actions"><button class="btn secondary" :disabled="!!documentBusy" @click="createDocument(flowQuote, 'QUOTE')">Gerar orçamento em PDF</button><button v-if="flowQuote.delivered_at" class="btn secondary" :disabled="!!documentBusy" @click="createDocument(flowQuote, 'DELIVERY')">Gerar comprovante de entrega</button><button v-if="flowQuote.returned_at" class="btn secondary" :disabled="!!documentBusy" @click="createDocument(flowQuote, 'RETURN')">Gerar comprovante de devolução</button></div><div v-if="documentError" class="error-message">{{ documentError }}</div><div v-if="documents.length" class="rental-document-list"><button v-for="item in documents" :key="item.id" class="rental-document-item" :disabled="!!documentBusy" @click="downloadDocument(flowQuote, item)"><span><strong>{{ item.kind_label }} · versão {{ item.version }}</strong><small>{{ shortDate(item.created_at?.slice(0, 10)) }} · {{ item.created_by_name }}</small></span><span>Baixar PDF</span></button></div><small v-else>Nenhum documento gerado para esta locação.</small></details>
       <div class="modal-actions"><span class="spacer" /><button type="button" class="btn secondary" @click="flowQuote = null">Fechar</button></div>
     </ModalDialog>
     <ModalDialog v-if="operation && operationQuote" :title="({ deliver: 'Registrar entrega', extend: 'Prorrogar locação', return: 'Registrar devolução', cancel: 'Cancelar locação' })[operation]" @close="operation = null">

@@ -136,3 +136,36 @@ class RentalExtension(models.Model):
 
     class Meta:
         ordering = ("-created_at",)
+
+
+class RentalDocument(models.Model):
+    class Kind(models.TextChoices):
+        QUOTE = "QUOTE", "Orçamento"
+        DELIVERY = "DELIVERY", "Comprovante de entrega"
+        RETURN = "RETURN", "Comprovante de devolução"
+
+    quote = models.ForeignKey(RentalQuote, on_delete=models.PROTECT, related_name="documents")
+    kind = models.CharField(max_length=12, choices=Kind.choices)
+    version = models.PositiveIntegerField()
+    snapshot = models.JSONField()
+    content_hash = models.CharField(max_length=64)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="rental_documents")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("kind", "-version")
+        constraints = [models.UniqueConstraint(fields=("quote", "kind", "version"), name="unique_rental_document_version")]
+
+
+class UnmetRentalDemand(models.Model):
+    equipment = models.ForeignKey("assets.Equipment", on_delete=models.PROTECT, related_name="unmet_demands")
+    customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT, related_name="unmet_rental_demands")
+    start_date = models.DateField()
+    end_date = models.DateField()
+    reason = models.CharField(max_length=255)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="unmet_rental_demands")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        constraints = [models.UniqueConstraint(fields=("equipment", "customer", "start_date", "end_date"), name="unique_unmet_rental_demand")]

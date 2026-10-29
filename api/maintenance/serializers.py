@@ -96,6 +96,9 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
         return order
 
     def validate(self, attrs):
+        for field in ("labor_cost", "parts_cost"):
+            if attrs.get(field, 0) < 0:
+                raise serializers.ValidationError({field: "O custo não pode ser negativo."})
         if self.instance:
             immutable_fields = {"equipment", "maintenance_type", "symptoms"}
             attempted_changes = immutable_fields.intersection(attrs)

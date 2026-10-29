@@ -42,6 +42,8 @@ class Equipment(models.Model):
     qr_code_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.AVAILABLE)
     daily_rate = models.DecimalField(max_digits=12, decimal_places=2)
+    acquisition_cost = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    turnaround_days = models.PositiveSmallIntegerField(default=0)
     acquisition_date = models.DateField(null=True, blank=True)
     technical_details = models.TextField(blank=True)
     current_usage_hours = models.PositiveIntegerField(default=0)
