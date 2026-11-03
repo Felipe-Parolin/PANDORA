@@ -47,8 +47,11 @@ def inspection_template(equipment, inspection_type):
     return result
 
 
-def ensure_inspections(quote, inspection_type):
-    for line in quote.items.select_related("equipment__category"):
+def ensure_inspections(quote, inspection_type, equipment_ids=None):
+    lines = quote.items.select_related("equipment__category")
+    if equipment_ids is not None:
+        lines = lines.filter(equipment_id__in=equipment_ids)
+    for line in lines:
         RentalInspection.objects.get_or_create(
             quote=quote,
             equipment=line.equipment,
@@ -59,7 +62,7 @@ def ensure_inspections(quote, inspection_type):
 
 def ensure_pre_rental_orders(quote, opened_by):
     """Open one maintenance ticket per reserved equipment, without duplicating retries."""
-    for inspection in quote.inspections.filter(inspection_type=RentalInspection.Type.PRE_RENTAL):
+    for inspection in quote.inspections.filter(inspection_type=RentalInspection.Type.PRE_RENTAL, equipment_id__in=quote.items.values("equipment_id")):
         ServiceOrder.objects.get_or_create(
             rental_inspection=inspection,
             defaults={
@@ -72,9 +75,9 @@ def ensure_pre_rental_orders(quote, opened_by):
         )
 
 
-def ensure_return_orders(quote, opened_by):
+def ensure_return_orders(quote, opened_by, equipment_ids=None):
     """Open one final-inspection OS per returned equipment, including clean returns."""
-    current_equipment_ids = quote.items.values_list("equipment_id", flat=True)
+    current_equipment_ids = equipment_ids if equipment_ids is not None else quote.items.filter(stage__in=("RETURNED", "COMPLETED")).values_list("equipment_id", flat=True)
     for inspection in quote.inspections.filter(
         inspection_type=RentalInspection.Type.RETURN, equipment_id__in=current_equipment_ids
     ):
@@ -102,8 +105,21 @@ def ensure_return_orders(quote, opened_by):
 
 
 def blocking_service_orders(equipment):
-    return ServiceOrder.objects.filter(equipment=equipment).exclude(
+    """Return only service orders that actually immobilize the equipment.
+
+    Scheduled preventive work does not block a rental until it starts. Also,
+    pre-rental orders attached to draft/sent quotes are treated as orphaned
+    preparation records and must not make the equipment unavailable forever.
+    """
+    pending_pre = Q(maintenance_type=ServiceOrder.Type.PRE_RENTAL, rental_inspection__quote__status__in=("APPROVED", "ACTIVE")) & ~Q(rental_inspection__result="BLOCKED")
+    return ServiceOrder.objects.filter(equipment=equipment).exclude(pending_pre).exclude(
         status__in=[ServiceOrder.Status.COMPLETED, ServiceOrder.Status.CANCELLED]
+    ).exclude(
+        maintenance_type=ServiceOrder.Type.PREVENTIVE,
+        status=ServiceOrder.Status.SCHEDULED,
+    ).exclude(
+        maintenance_type=ServiceOrder.Type.PRE_RENTAL,
+        rental_inspection__quote__status__in=(RentalQuote.Status.DRAFT, RentalQuote.Status.SENT),
     )
 
 
@@ -112,15 +128,15 @@ def refresh_equipment_status(equipment):
         return equipment.status
     pending_pre_rental = Q(
         maintenance_type=ServiceOrder.Type.PRE_RENTAL,
-        rental_inspection__quote__status=RentalQuote.Status.APPROVED,
+        rental_inspection__quote__status__in=(RentalQuote.Status.APPROVED, RentalQuote.Status.ACTIVE),
     ) & ~Q(rental_inspection__result=RentalInspection.Result.BLOCKED)
     if blocking_service_orders(equipment).exclude(pending_pre_rental).exists():
         new_status = Equipment.Status.MAINTENANCE
-    elif RentalItem.objects.filter(equipment=equipment, quote__status=RentalQuote.Status.RETURNED).exists():
+    elif RentalItem.objects.filter(equipment=equipment, stage="RETURNED", quote__status__in=BLOCKING_RENTAL_STATUSES).exists():
         new_status = Equipment.Status.INSPECTION
-    elif RentalItem.objects.filter(equipment=equipment, quote__status=RentalQuote.Status.ACTIVE).exists():
+    elif RentalItem.objects.filter(equipment=equipment, stage="DELIVERED", quote__status__in=BLOCKING_RENTAL_STATUSES).exists():
         new_status = Equipment.Status.RENTED
-    elif RentalItem.objects.filter(equipment=equipment, quote__status=RentalQuote.Status.APPROVED).exists():
+    elif RentalItem.objects.filter(equipment=equipment, stage="PENDING", quote__status__in=("APPROVED", "ACTIVE")).exists():
         new_status = Equipment.Status.RESERVED
     else:
         new_status = Equipment.Status.AVAILABLE
@@ -136,8 +152,8 @@ def availability_reason(equipment, start_date, end_date, ignore_quote=None):
     conflicts = RentalItem.objects.filter(
         equipment=equipment,
         quote__status__in=BLOCKING_RENTAL_STATUSES,
-        quote__start_date__lte=end_date,
-        quote__end_date__gte=start_date,
+        start_date__lte=end_date, end_date__gte=start_date,
+        stage__in=("PENDING", "DELIVERED", "RETURNED"),
     )
     if ignore_quote:
         conflicts = conflicts.exclude(quote=ignore_quote)
@@ -151,6 +167,14 @@ def availability_reason(equipment, start_date, end_date, ignore_quote=None):
         )
     if orders.exists():
         return "Existe uma ordem de serviço aberta para o equipamento."
+    if ServiceOrder.objects.filter(
+        equipment=equipment,
+        maintenance_type=ServiceOrder.Type.PREVENTIVE,
+        status=ServiceOrder.Status.SCHEDULED,
+        scheduled_at__date__gte=start_date,
+        scheduled_at__date__lte=end_date,
+    ).exists():
+        return "Há manutenção preventiva agendada dentro do período informado."
     maintenance_reason = critical_maintenance_reason(equipment)
     if maintenance_reason:
         return maintenance_reason

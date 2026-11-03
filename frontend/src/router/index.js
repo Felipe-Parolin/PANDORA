@@ -8,6 +8,9 @@ import EquipmentView from '../views/EquipmentView.vue'
 import MaintenanceView from '../views/MaintenanceView.vue'
 import RentalsView from '../views/RentalsView.vue'
 import LogisticsView from '../views/LogisticsView.vue'
+import VehiclesView from '../views/VehiclesView.vue'
+import CommercialView from '../views/CommercialView.vue'
+import AssistantView from '../views/AssistantView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -20,7 +23,10 @@ const router = createRouter({
         { path: 'equipamentos', name: 'equipment', component: EquipmentView, meta: { permission: 'assets.view' } },
         { path: 'manutencao', name: 'maintenance', component: MaintenanceView, meta: { permission: 'maintenance.view' } },
         { path: 'locacoes', name: 'rentals', component: RentalsView, meta: { permission: 'rentals.view' } },
+        { path: 'veiculos', name: 'vehicles', component: VehiclesView, meta: { permission: 'logistics.view' } },
         { path: 'transporte', name: 'logistics', component: LogisticsView, meta: { permission: 'logistics.view' } },
+        { path: 'comercial', name: 'commercial', component: CommercialView, meta: { permission: ['rentals.view', 'assets.view', 'customers.view', 'commercial.receivables.view'] } },
+        { path: 'assistente', name: 'assistant', component: AssistantView, meta: { permission: 'ai.assist' } },
       ],
     },
   ],
@@ -36,7 +42,7 @@ router.beforeEach(async (to) => {
   if (to.meta.permission && !canAny(to.meta.permission)) {
     const fallback = [
       ['dashboard.view', '/'], [['customers.view', 'accounts.users.view', 'accounts.groups.manage'], '/pessoas'], ['assets.view', '/equipamentos'],
-      ['maintenance.view', '/manutencao'], ['rentals.view', '/locacoes'], ['logistics.view', '/transporte'],
+      ['maintenance.view', '/manutencao'], ['rentals.view', '/locacoes'], ['logistics.view', '/transporte'], [['commercial.receivables.view', 'customers.view', 'assets.view'], '/comercial'], ['ai.assist', '/assistente'],
     ].find(([permission]) => canAny(permission))
     if (!fallback) { logout(); return '/login' }
     return fallback[1]

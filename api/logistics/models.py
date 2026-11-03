@@ -47,8 +47,20 @@ class TransportTask(models.Model):
     vehicle = models.ForeignKey(Vehicle, on_delete=models.PROTECT, null=True, blank=True, related_name="transport_tasks")
     driver = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="driving_tasks")
     address = models.CharField(max_length=255)
+    address_cep = models.CharField(max_length=8, blank=True, default="")
     complement = models.CharField(max_length=120, blank=True)
     scheduled_at = models.DateTimeField(null=True, blank=True)
+    scheduled_end_at = models.DateTimeField(null=True, blank=True)
+    trip_reference = models.CharField(max_length=40, blank=True)
+    load_sequence = models.PositiveSmallIntegerField(default=1)
+    load_manifest = models.JSONField(default=list, blank=True)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    geocoded_address = models.CharField(max_length=255, blank=True)
+    rental_items = models.ManyToManyField("rentals.RentalItem", related_name="transport_tasks", blank=True)
+    items_scoped = models.BooleanField(default=False)
+    batch_date = models.DateField(null=True, blank=True)
+    batch_key = models.CharField(max_length=48, blank=True, default="")
     departed_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True)
@@ -57,7 +69,7 @@ class TransportTask(models.Model):
 
     class Meta:
         ordering = ("scheduled_at", "created_at")
-        constraints = [models.UniqueConstraint(fields=("quote", "leg"), name="unique_quote_transport_leg")]
+        constraints = [models.UniqueConstraint(fields=("quote", "leg", "batch_key"), name="unique_quote_transport_batch")]
 
     def __str__(self):
         return f"{self.quote.number} · {self.get_leg_display()}"

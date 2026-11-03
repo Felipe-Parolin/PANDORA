@@ -26,13 +26,20 @@ class RentalQuote(models.Model):
     notes = models.TextField(blank=True)
     delivery_transport_required = models.BooleanField(default=False)
     return_transport_required = models.BooleanField(default=False)
+    requested_delivery_at = models.DateTimeField(null=True, blank=True)
+    requested_return_at = models.DateTimeField(null=True, blank=True)
+    requested_delivery_notes = models.TextField(blank=True)
     delivery_address = models.CharField(max_length=255, blank=True)
     return_address = models.CharField(max_length=255, blank=True)
+    delivery_number = models.CharField(max_length=20, blank=True, default="")
+    return_number = models.CharField(max_length=20, blank=True, default="")
     delivery_complement = models.CharField(max_length=120, blank=True)
     return_complement = models.CharField(max_length=120, blank=True)
     delivery_cep = models.CharField(max_length=8, blank=True)
     return_cep = models.CharField(max_length=8, blank=True)
     transport_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    estimated_transport_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    transport_fee_adjustment_reason = models.TextField(blank=True)
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -74,18 +81,48 @@ class RentalQuote(models.Model):
 
 
 class RentalItem(models.Model):
+    class Stage(models.TextChoices):
+        PENDING = "PENDING", "A retirar"
+        DELIVERED = "DELIVERED", "Com o cliente"
+        RETURNED = "RETURNED", "Em inspeção de retorno"
+        COMPLETED = "COMPLETED", "Devolução concluída"
+
     quote = models.ForeignKey(RentalQuote, on_delete=models.CASCADE, related_name="items")
     equipment = models.ForeignKey("assets.Equipment", on_delete=models.PROTECT, related_name="rental_items")
     daily_rate = models.DecimalField(max_digits=12, decimal_places=2)
     quantity_days = models.PositiveIntegerField()
     total = models.DecimalField(max_digits=12, decimal_places=2)
     condition_out = models.TextField(blank=True)
+    delivery_location = models.JSONField(default=dict, blank=True)
+    return_location = models.JSONField(default=dict, blank=True)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    stage = models.CharField(max_length=16, choices=Stage.choices, default=Stage.PENDING)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    delivered_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="+")
+    delivery_conditions = models.TextField(blank=True)
+    returned_at = models.DateTimeField(null=True, blank=True)
+    returned_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="+")
+    return_conditions = models.TextField(blank=True)
+    finalized_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=("quote", "equipment"), name="unique_equipment_per_quote")]
+        constraints = [
+            models.UniqueConstraint(fields=("quote", "equipment"), name="unique_equipment_per_quote"),
+            models.CheckConstraint(condition=models.Q(end_date__gte=models.F("start_date")), name="rental_item_valid_period"),
+        ]
 
     def save(self, *args, **kwargs):
+        if self.start_date is None:
+            self.start_date = self.quote.start_date
+        if self.end_date is None:
+            self.end_date = self.quote.end_date
+        if self._state.adding and self.stage == self.Stage.PENDING:
+            self.stage = {"ACTIVE": self.Stage.DELIVERED, "RETURNED": self.Stage.RETURNED, "COMPLETED": self.Stage.COMPLETED}.get(self.quote.status, self.Stage.PENDING)
+        self.quantity_days = (self.end_date - self.start_date).days + 1
         self.total = self.daily_rate * self.quantity_days
+        if kwargs.get("update_fields") and set(kwargs["update_fields"]) & {"start_date", "end_date", "daily_rate"}:
+            kwargs["update_fields"] = set(kwargs["update_fields"]) | {"quantity_days", "total"}
         super().save(*args, **kwargs)
 
 
@@ -130,9 +167,29 @@ class RentalExtension(models.Model):
     quote = models.ForeignKey(RentalQuote, on_delete=models.CASCADE, related_name="extensions")
     previous_end_date = models.DateField()
     new_end_date = models.DateField()
+    item_changes = models.JSONField(default=list, blank=True)
     conditions = models.TextField(blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="rental_extensions")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ("-created_at",)
+
+
+class RentalDocument(models.Model):
+    class Kind(models.TextChoices):
+        QUOTE = "QUOTE", "Orçamento"
+        DELIVERY = "DELIVERY", "Comprovante de entrega"
+        RETURN = "RETURN", "Comprovante de devolução"
+
+    quote = models.ForeignKey(RentalQuote, on_delete=models.PROTECT, related_name="documents")
+    kind = models.CharField(max_length=12, choices=Kind.choices)
+    version = models.PositiveIntegerField()
+    snapshot = models.JSONField()
+    content_hash = models.CharField(max_length=64)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="rental_documents")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("kind", "-version")
+        constraints = [models.UniqueConstraint(fields=("quote", "kind", "version"), name="unique_rental_document_version")]

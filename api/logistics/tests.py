@@ -1,3 +1,4 @@
+from django.test import SimpleTestCase
 from datetime import timedelta
 from decimal import Decimal
 
@@ -19,7 +20,7 @@ class TransportFlowTests(TestCase):
         self.technician = User.objects.create_user("tech-transport@example.com", "test-password", full_name="Técnico", role=User.Role.MAINTENANCE)
         self.customer = Customer.objects.create(person_type="PF", name="Cliente", document="12345678909", phone="19999999999")
         category = EquipmentCategory.objects.create(name="Categoria", default_daily_rate=Decimal("100"))
-        self.equipment = Equipment.objects.create(category=category, name="Equipamento", brand="Marca", model="M1", serial_number="SER-TR", internal_code="EQ-TR", daily_rate=Decimal("100"))
+        self.equipment = Equipment.objects.create(category=category, name="Equipamento", brand="Marca", model="M1", serial_number="SER-TR", internal_code="EQ-TR", daily_rate=Decimal("100"), estimated_weight_kg=100)
         self.vehicle = Vehicle.objects.create(plate="ABC1D23", brand="Fiat", model="Strada", capacity_kg=700)
         self.quote = RentalQuote.objects.create(
             customer=self.customer, start_date=timezone.localdate(), end_date=timezone.localdate() + timedelta(days=2),
@@ -107,3 +108,27 @@ class TransportFlowTests(TestCase):
         self.client.patch(f"/api/transport-tasks/{outbound.pk}/", {"vehicle": self.vehicle.pk}, format="json")
         response = self.client.delete(f"/api/vehicles/{self.vehicle.pk}/")
         self.assertEqual(response.status_code, 409)
+
+
+class DayPlanLoadProfileTests(SimpleTestCase):
+    """Peso a bordo: sai com o que será entregue; entrega descarrega e retirada carrega."""
+
+    @staticmethod
+    def stop(leg, weight):
+        return {"leg": leg, "weight_kg": weight, "items_without_weight": 0}
+
+    def test_remaining_weight_uses_peak_load(self):
+        from logistics.dayplan import _load_profile
+        stops = [self.stop("DELIVERY", 100), self.stop("RETURN", 80), self.stop("DELIVERY", 50), self.stop("RETURN", 120)]
+        profile = _load_profile(stops, 400)
+        self.assertEqual(profile["initial_load_kg"], 150)
+        self.assertEqual(profile["peak_load_kg"], 200)
+        self.assertEqual(profile["final_load_kg"], 200)
+        self.assertEqual(profile["remaining_kg"], 200)
+        self.assertFalse(profile["overloaded"])
+
+    def test_overloaded_when_peak_exceeds_capacity(self):
+        from logistics.dayplan import _load_profile
+        profile = _load_profile([self.stop("DELIVERY", 300), self.stop("DELIVERY", 300)], 500)
+        self.assertTrue(profile["overloaded"])
+        self.assertEqual(profile["remaining_kg"], -100)

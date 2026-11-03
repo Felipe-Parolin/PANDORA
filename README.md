@@ -1,156 +1,232 @@
+<div align="center">
+
 # PANDORA
 
-Plataforma interna para locação, inspeção e manutenção dos equipamentos próprios da Mazzi Materiais de Construção.
+**Gestão de locações, manutenção e logística de equipamentos**
 
-Este repositório contém a primeira versão funcional do MVP: API em Python/Django REST, frontend em Vue 3 e PostgreSQL 17 como banco principal. O SQLite permanece apenas como opção explícita para testes isolados.
+Projeto Interdisciplinar · Sistemas de Informação · 2026
 
-## O que já está implementado
+</div>
 
-- autenticação JWT com ACL aplicada na interface e nos endpoints;
-- grupos padrão **Administrador**, **Vendedor** e **Manutenção**, além de grupos personalizados;
-- matriz de permissões por operação, com criação, edição e exclusão de grupos; a sidebar e as rotas refletem as permissões atuais do usuário;
-- cadastro de funcionários e clientes PF/PJ;
-- categorias e equipamentos com QR Code gerado, baixável e resolvido pelo sistema;
-- manuais, documentos, fotos e evidências acessados no próprio equipamento e na manutenção;
-- edição e exclusão contextual dos principais cadastros;
-- planos preventivos, agendados, pré-locação e pós-locação;
-- manutenção organizada em duas áreas: locação (pré/pós) e oficina/revisões (preventivas, agendadas e corretivas), com etapa operacional como filtro;
-- OS em cartões com uma única ação de abertura; inspeção e mídias ficam dentro da OS, e planos periódicos permanecem acessíveis na oficina;
-- abandono de chamado com justificativa obrigatória, datas de transição e redistribuição visível;
-- ordens preventivas/corretivas, técnico, atividades e liberação técnica;
-- orçamento de locação por cliente, período e múltiplos equipamentos;
-- transporte opcional de entrega e/ou coleta, com CEP, endereço, complemento e valor discriminado no orçamento;
-- cadastro de veículos e planejamento de viagens com motorista, horário, status e histórico protegido;
-- fluxo integrado: ao aprovar a reserva com entrega, a viagem aparece em Transporte; a liberação técnica precede a viagem; viagem concluída precede a entrega ou devolução quando o transporte é contratado;
-- disponibilidade validada antes da seleção, com motivo dos bloqueios por equipamento;
-- cálculo automático de diárias, preço negociado por item, desconto e total;
-- bloqueio de sobreposição quando o orçamento vira reserva aprovada;
-- bloqueio por OS aberta ou manutenção crítica vencida;
-- reserva com responsável, condições e cancelamento auditável;
-- OS pré-locação automática na Manutenção para cada equipamento reservado, com checklist por categoria, fotos, observações e impedimento crítico;
-- entrega vinculada à inspeção, prorrogação com nova consulta de disponibilidade e histórico;
-- devolução com OS de inspeção final aberta na Manutenção para cada equipamento; Locações acompanha o progresso e conclui a devolução;
-- encaminhamento de avarias para reparo na mesma OS pós-locação, mantendo o equipamento bloqueado;
-- planos de manutenção controlados por data, periodicidade e horas de uso, com OS preventiva agendada gerada automaticamente quando vence o intervalo em dias;
-- dashboard, listas em cartões e modais responsivos para desktop e celular;
-- dados demonstrativos e testes automatizados.
+## Sobre o projeto
 
-Emissão fiscal **real**, cobrança, portal externo, IoT e decisões automáticas por IA continuam fora desta etapa. A operação de locação não gera nota fiscal nem documento fiscal de transporte. A integração fiscal exigirá validação com a contabilidade da empresa antes de configurar regime, inscrição e documentos aplicáveis em Leme/SP.
+O PANDORA organiza a operação dos equipamentos da Mazzi Materiais de Construção: cadastros, orçamentos, reservas, inspeções, retiradas e devoluções, manutenção, transporte e contas a receber. O assistente de IA consulta manuais e apoia o técnico; as decisões e liberações continuam sendo humanas.
 
-## Estrutura
+O projeto usa **Django REST**, **Vue 3** e **PostgreSQL**. Os comandos abaixo são para **PowerShell no Windows**, executados a partir da pasta indicada. Não é necessário ativar o ambiente virtual.
 
-```text
-PANDORA/
-├── api/                    # Django REST API
-│   ├── accounts/           # usuários, perfis e autenticação
-│   ├── customers/          # clientes PF/PJ
-│   ├── assets/             # categorias, equipamentos e mídias
-│   ├── maintenance/        # planos, OS e padrões criacionais
-│   ├── rentals/            # orçamentos, itens e disponibilidade
-│   ├── logistics/          # veículos e viagens opcionais da locação
-│   ├── core/               # dashboard, auditoria e configuração de IA
-│   └── config/             # settings e roteamento
-├── frontend/               # Vue 3 + Vite
-├── docs/                   # arquitetura e contrato da API
-└── ARTEFATOS DO PROJETO/   # requisitos e modelagens acadêmicas
-```
+## O que instalar
 
-## Como executar
+- **Python 3.12 ou superior**, compatível com Django 6.
+- **Node.js 22.12 ou superior** — o projeto também aceita a linha 20 a partir da versão 20.19.
+- **PostgreSQL 17 ou 18**, incluindo pgAdmin e as ferramentas de linha de comando.
 
-### 1. Backend
-
-Crie o banco e o usuário no PostgreSQL ou, se utilizar Docker, copie `.env.compose.example` para `.env` na raiz e execute:
+Confira a instalação no terminal:
 
 ```powershell
-docker compose up -d postgres
+python --version
+node --version
 ```
 
-Depois, no PowerShell, a partir da pasta `api`:
+Mantenha os arquivos em UTF-8. No VS Code, a codificação aparece no canto inferior direito.
+
+## Como rodar o projeto
+
+### 1. Baixar e abrir
+
+Neste repositório, clique em **Code → Download ZIP** e extraia os arquivos, ou use sua cópia Git. Abra no VS Code a pasta que contém `api`, `frontend` e este README.
+
+### 2. Criar o banco no pgAdmin
+
+1. Abra o pgAdmin e conecte-se ao PostgreSQL instalado.
+2. Clique com o botão direito em **Databases → Create → Database**.
+3. Em **Database**, informe `pandora_db`.
+4. Em **Owner**, escolha seu usuário local do PostgreSQL, normalmente `postgres`.
+5. Clique em **Save**. Guarde o nome do usuário e a senha que você definiu na instalação.
+
+### 3. Instalar e configurar o backend
+
+No terminal da raiz do projeto:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
-python manage.py migrate
-python manage.py seed_demo
-python manage.py runserver
-```
-
-Para reproduzir a base fictícia mais completa desta entrega, use `python manage.py seed_realistic_demo` no lugar de `seed_demo`. O comando exige PostgreSQL `pandora_db` local em modo de desenvolvimento; cria clientes, equipamentos com fotos, veículos, usuários, locações em várias etapas, inspeções, OS, planos de revisão e notificações. É idempotente para os registros demonstrativos, mas **não limpa dados existentes**. Faça backup antes de executar `flush` em uma base que já contenha dados.
-
-A API ficará em `http://127.0.0.1:8000/api/`.
-
-O `.env.example` já usa PostgreSQL. Informe `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST` e `DB_PORT`. Para um teste temporário sem PostgreSQL, defina explicitamente `DB_ENGINE=sqlite`.
-
-### Revisões periódicas
-
-Em **Manutenção → Oficina e revisões → Planos de revisão periódica**, cadastre o equipamento e o intervalo em dias. Sem data informada, o primeiro vencimento ocorre X dias após o cadastro (ou após a última manutenção, se registrada). Uma data de próxima execução pode antecipar o primeiro ciclo. Ao vencer, o sistema cria uma única OS **Preventiva · Agendada** vinculada ao plano; ela aparece na oficina e bloqueia a disponibilidade do equipamento até ser concluída ou cancelada. Ao concluir a OS, o próximo vencimento é calculado a partir da data da conclusão. A consulta da tela sincroniza planos vencidos e não duplica OS.
-
-Para gerar OS mesmo sem ninguém abrir o sistema, agende a execução diária deste comando no servidor (Agendador de Tarefas do Windows ou cron):
-
-```powershell
-python manage.py generate_preventive_orders
-```
-
-### Consulta de endereço e simulação de frete
-
-No orçamento, o botão **Buscar CEP** consulta a [BrasilAPI CEP V2](https://brasilapi.com.br/docs) sob demanda, preenche o endereço e sugere um frete por trecho. O cálculo usa coordenadas aproximadas do CEP, distância em linha reta ajustada por `FREIGHT_ROAD_FACTOR`, `FREIGHT_RATE_PER_KM` e `FREIGHT_MINIMUM_PER_LEG`. Entrega e coleta são cobradas como trechos separados. Não é uma rota viária nem uma tarifa oficial: o vendedor pode corrigir o valor antes de salvar.
-
-Configure `FREIGHT_ORIGIN_CEP` com o CEP real do depósito e ajuste as tarifas no `.env` da API antes de utilizar os valores comercialmente. Enquanto não configurado, a origem **provisória** é o Centro de Leme/SP; se a consulta não devolver coordenadas, o frete fica para preenchimento manual. O desconto do orçamento é informado em percentual sobre equipamentos **mais transporte**, e o valor em reais calculado é persistido para manter compatibilidade com as demais telas.
-
-### 2. Frontend
-
-Em outro terminal, a partir da pasta `frontend`:
-
-```powershell
-pnpm install
-Copy-Item .env.example .env
-pnpm dev
-```
-
-Também é possível usar `npm install` e `npm run dev`. A aplicação ficará em `http://127.0.0.1:5173`.
-
-### Acesso demonstrativo
-
-| Perfil | E-mail | Senha |
-|---|---|---|
-| Administrador | `admin@pandora.local` | `Pandora@123` |
-| Vendedor | `vendas@pandora.local` | `Pandora@123` |
-| Manutenção | `manutencao@pandora.local` | `Pandora@123` |
-| Logística | `logistica@pandora.local` | `Pandora@123` |
-
-As credenciais acima são somente para desenvolvimento. Troque-as em qualquer ambiente compartilhado.
-
-O sino do cabeçalho mostra notificações individuais de novas OS, reservas/devoluções e viagens. O contador é atualizado automaticamente a cada 30 segundos; é possível abrir o registro relacionado ou marcar tudo como lido. A API mantém o histórico em `/api/notifications/` e não expõe notificações de outros usuários.
-
-O backup local demonstrativo fica em `backups/PANDORA-demo-completo-2026-10-08-final.zip`: inclui o dump PostgreSQL, as fotos em `media/` e instruções de restauração. `backups/` é ignorado pelo Git para não publicar dados ou cópias de banco acidentalmente.
-
-## Qualidade
-
-```powershell
-# API
 cd api
-.\.venv\Scripts\python.exe manage.py check
-.\.venv\Scripts\python.exe manage.py test
-
-# Frontend
-cd ..\frontend
-pnpm build
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-Consulte [Arquitetura](docs/ARCHITECTURE.md) e [Contrato inicial da API](docs/API.md) para decisões de domínio, regras e endpoints.
-Para a emissão fiscal futura em Leme/SP, consulte [Preparação fiscal](docs/FISCAL_READINESS.md).
+Abra `api/.env` e configure os campos abaixo com os dados do seu PostgreSQL. **Não altere a senha no `settings.py`.**
 
-Após atualizar uma instalação existente, execute `python manage.py migrate`. A interface consulta as permissões atuais do usuário ao navegar, sem exigir novo login após ajustes de ACL.
+```dotenv
+DB_ENGINE=postgresql
+DB_NAME=pandora_db
+DB_USER=postgres
+DB_PASSWORD=preencha_com_a_senha_do_seu_postgresql
+DB_HOST=localhost
+DB_PORT=5432
+DJANGO_DEBUG=true
+AI_ENABLED=false
+```
 
-Os fluxos de locação implementam os cards [#37](https://github.com/Felipe-Parolin/PANDORA/issues/37), [#38](https://github.com/Felipe-Parolin/PANDORA/issues/38), [#39](https://github.com/Felipe-Parolin/PANDORA/issues/39), [#40](https://github.com/Felipe-Parolin/PANDORA/issues/40) e [#41](https://github.com/Felipe-Parolin/PANDORA/issues/41).
+O valor de `DB_PASSWORD` acima é apenas uma indicação de preenchimento. Gere também uma chave exclusiva para `DJANGO_SECRET_KEY` com o comando abaixo e cole o resultado somente em `api/.env`:
 
-## Equipe
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(50))"
+```
 
-- 116758 - Eduardo Souza Gomes (Engenheiro de IA e Dados)
-- 116276 - Felipe Antonio Parolin (QA / Scrum Master)
-- 116849 - Gabriel Eduardo da Cunha (Product Owner & Business Analyst)
-- 116743 - Gabriel Moi Stensen (Arquiteto de Software & DBA)
-- 117224 - Matheus Henrique Araujo Silva (Desenvolvedor Front-end & UX)
-- 116305 - Rafael Donizete Mantoan (Desenvolvedor Back-end / IA)
+Não publique seu `.env`. O `.env.example` já deixa a IA desativada e os e-mails no console para os primeiros testes.
+
+Crie as tabelas:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py migrate
+```
+
+### 4. Carregar a base de testes
+
+Ainda na pasta `api`:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py seed_realistic_demo
+```
+
+Na primeira execução, o comando solicita uma senha para os **novos usuários de demonstração**, sem mostrá-la no terminal. Anote a senha que você escolher. Usuários existentes mantêm sua senha, grupo e dados; reexecutar a carga não apaga a base nem desfaz os testes já feitos.
+
+| Acesso | E-mail |
+| --- | --- |
+| Administrador | `admin@pandora.local` |
+| Vendas | `vendas@pandora.local` |
+| Manutenção | `manutencao@pandora.local` |
+| Logística | `logistica@pandora.local` |
+| Somente consulta financeira | `consulta@pandora.local` |
+
+A carga cria dados fictícios com datas relativas ao dia da execução. Ela prepara fotos, manuais, histórico técnico, notificações, locações em diferentes etapas, viagens, campanhas em rascunho, contas abertas e recibos de baixas. Não envia e-mails nem consulta IA ou mapas. É permitida somente no PostgreSQL local `pandora_db` em desenvolvimento e em bancos locais de testes com prefixo `test_`.
+
+Caso precise redefinir uma senha **na sua instalação local**:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py changepassword admin@pandora.local
+```
+
+### 5. Iniciar a API
+
+No mesmo terminal, ainda em `api`:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py runserver
+```
+
+Mantenha esse terminal aberto. A API estará em **http://127.0.0.1:8000/api/**.
+
+### 6. Iniciar o site
+
+Abra **outro terminal na raiz do projeto**:
+
+```powershell
+cd frontend
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+npm.cmd install
+npm.cmd run dev
+```
+
+Abra **http://127.0.0.1:5173** e entre com um dos acessos acima e a senha definida na carga. Se o Vite indicar outra porta, use o endereço mostrado no terminal e ajuste `CORS_ALLOWED_ORIGINS` em `api/.env`.
+
+**Para iniciar novamente:** execute apenas os comandos `runserver` e `npm.cmd run dev`, cada um em seu terminal. Depois de atualizar o código, rode `migrate` e instale novamente as dependências se os arquivos de requisitos mudaram.
+
+No Linux/macOS, substitua `python` por `python3` na criação do ambiente, `.venv\Scripts\python.exe` por `.venv/bin/python` e `npm.cmd` por `npm`.
+
+## O que testar na base demonstrativa
+
+| Área | Sugestões de teste |
+| --- | --- |
+| Cadastros | Clientes PF/PJ, documentos e máscaras, endereços com número separado, observações, usuários, permissões, categorias e checklists, equipamentos e veículos. |
+| Locações | Orçamento em etapas, edição, disponibilidade, aprovação, inspeção prévia, entrega e devolução parcial, períodos e endereços por equipamento, prorrogação, cancelamento e PDFs. |
+| Manutenção | OS pré/pós-locação, reparo de avaria no retorno, chamados abertos/em execução/aguardando peças/abandonados, revisão periódica e liberação técnica. |
+| Logística | Entregas e coletas, agenda, viagem em andamento, veículo/motorista, roteiro do dia e carga. Os pontos demonstrativos do mapa são ilustrativos. |
+| Comercial | Faturamento, contas por cliente, mudança de vencimento, juros após cinco dias de carência, seleção de várias contas, baixa, recibo PDF, sugestões de compra e campanhas. |
+| Assistente | Manuais PDF indexados, histórico de casos e consultas fictícias identificadas como demonstração. Para respostas de um modelo real, configure a IA abaixo. |
+
+Comece pelas locações `ORC-CEN-007` (três equipamentos, períodos/destinos e entrega parcial), `ORC-CEN-008` (devolução parcial), `ORC-CEN-009` (transporte em andamento) e `ORC-CEN-010` (avaria na devolução). Em Contas a receber, procure **Construtora Vila Nova Ltda** para testar seleção entre páginas e contas baixadas.
+
+As contas são geradas na primeira entrega, vencendo na devolução prevista. A taxa inicial é **1% ao mês, simples**, proporcional por dia após cinco dias de carência, editável na conta aberta. A baixa registra o pagamento informado pelo operador; não movimenta dinheiro nem emite nota fiscal.
+
+### IA, frete e e-mail
+
+- **IA real:** em `api/.env`, preencha sua própria `GROQ_API_KEY`, altere `AI_ENABLED=true` e reinicie a API. Sem isso, o restante do sistema funciona e a consulta aos manuais pode usar a busca local.
+- **Frete e mapa:** precisam de internet. O depósito já está configurado. Use um endereço real com CEP e número para testar uma rota; endereços da carga são fictícios. Entrega e coleta são calculadas separadamente. A tarifa inicial é R$ 3,00/km, com mínimo de R$ 25,00 por trecho/viagem, além dos adicionais configurados.
+- **E-mail de marketing sem envio real:** para testar a preparação e o botão de envio, use as configurações abaixo e reinicie a API. A mensagem será escrita apenas no terminal. As campanhas da carga permanecem em rascunho até sua ação.
+
+```dotenv
+EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+EMAIL_HOST=localhost
+DEFAULT_FROM_EMAIL=teste@example.invalid
+```
+
+## Como criar um backup para os demais testadores
+
+### 1. Preparar a base
+
+Use apenas dados fictícios. Feche o site e pare o `runserver` com **Ctrl+C** enquanto gera a cópia, para evitar alterações durante o backup.
+
+### 2. Gerar o arquivo
+
+Em um terminal **na raiz do projeto**:
+
+```powershell
+.\api\.venv\Scripts\python.exe api/manage.py backup_local
+```
+
+O comando lê a conexão configurada, localiza `pg_dump`, exporta o PostgreSQL e cria um ZIP em `backups/`. O arquivo contém:
+
+- `database.dump`: banco completo, incluindo usuários, permissões e histórico;
+- `media/`: fotos, manuais e evidências;
+- `manifest.json`: data e hashes para verificar a integridade dos arquivos.
+
+O dump e o ZIP são verificados antes da conclusão. `.env`, chaves e configurações pessoais não entram no arquivo. O backup contém os dados e hashes de senha dos usuários: compartilhe somente a base fictícia, por um canal da equipe. A pasta `backups` é ignorada pelo Git.
+
+Se as ferramentas do PostgreSQL não forem encontradas, informe o caminho da versão instalada, por exemplo:
+
+```powershell
+.\api\.venv\Scripts\python.exe api/manage.py backup_local --pg-dump "C:\Program Files\PostgreSQL\18\bin\pg_dump.exe"
+```
+
+### 3. Restaurar em outro computador
+
+1. Instale a mesma versão principal do PostgreSQL usada na origem e configure o projeto até instalar as dependências.
+2. Extraia o ZIP recebido em uma pasta temporária.
+3. No pgAdmin, crie um banco **vazio**, por exemplo `pandora_db_restaurado`. Não execute `migrate` nesse banco antes da restauração.
+4. Clique com o botão direito no novo banco → **Restore**. Selecione `database.dump`, mantenha o formato **Custom** e execute a restauração. Confira o registro da operação.
+5. Copie a pasta `media` extraída para `api/media`.
+6. Em `api/.env`, ajuste `DB_NAME` para o banco restaurado e informe seu próprio usuário e senha do PostgreSQL.
+7. Rode `.\api\.venv\Scripts\python.exe api/manage.py migrate` a partir da raiz. Isso aplica eventuais migrações posteriores ao backup.
+8. Se não conhecer a senha do acesso demonstrativo, redefina-a localmente com `.\api\.venv\Scripts\python.exe api/manage.py changepassword admin@pandora.local`.
+9. Inicie a API e o frontend conforme os passos anteriores.
+
+Para reproduzir os cenários sem receber um ZIP, basta executar a carga `seed_realistic_demo` em um banco local novo. O código dessa carga acompanha o repositório.
+
+## Testes automatizados
+
+Na raiz do projeto, com PostgreSQL disponível:
+
+```powershell
+$env:AI_ENABLED='false'
+.\api\.venv\Scripts\python.exe api/manage.py check
+.\api\.venv\Scripts\python.exe api/manage.py test accounts assets commercial core customers rentals maintenance logistics --keepdb --noinput
+cd frontend
+npm.cmd test
+npm.cmd run build
+```
+
+O Django usa um banco separado com prefixo `test_`. O usuário do PostgreSQL precisa ter permissão para criá-lo. O comando acima cobre os módulos operacionais e comerciais; testes específicos de IA ficam em `api/ai`. A carga não substitui testes automatizados.
+
+## Estrutura e equipe
+
+`api/` contém a API, migrações e comandos de gestão; `frontend/` contém o site; `ARTEFATOS DO PROJETO/` reúne os materiais acadêmicos. `api/media/`, `backups/` e arquivos `.env` são locais.
+
+| RA | Nome |
+| --- | --- |
+| 116758 | Eduardo Souza Gomes |
+| 116276 | Felipe Antonio Parolin |
+| 116849 | Gabriel Eduardo da Cunha |
+| 116743 | Gabriel Moi Stensen |
+| 117224 | Matheus Henrique Araujo Silva |
+| 116305 | Rafael Donizete Mantoan |

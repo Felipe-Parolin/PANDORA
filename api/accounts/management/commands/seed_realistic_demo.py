@@ -2,6 +2,8 @@
 
 from datetime import datetime, time, timedelta
 from decimal import Decimal
+from getpass import getpass
+import re
 
 from django.conf import settings
 from django.core.files import File
@@ -40,40 +42,47 @@ class Command(BaseCommand):
     help = "Popula apenas o PostgreSQL local com uma operação fictícia, fotografias e fluxos consistentes."
 
     def add_arguments(self, parser):
-        parser.add_argument("--password", default="Pandora@123", help="Senha temporária dos usuários demonstrativos")
+        parser.add_argument("--password", help="Senha somente dos novos usuários demonstrativos; se omitida, será solicitada sem exibição.")
 
     @transaction.atomic
     def handle(self, *args, **options):
         database = settings.DATABASES["default"]
-        if not settings.DEBUG or database["ENGINE"] != "django.db.backends.postgresql" or database["HOST"] not in ("localhost", "127.0.0.1") or database["NAME"] != "pandora_db":
+        if not settings.DEBUG or database["ENGINE"] != "django.db.backends.postgresql" or database["HOST"] not in ("localhost", "127.0.0.1", "::1") or not (database["NAME"] == "pandora_db" or database["NAME"].startswith("test_")):
             raise CommandError("Este comando só pode ser usado na base PostgreSQL local pandora_db em modo de desenvolvimento.")
         today = timezone.localdate()
         password = options["password"]
+        demo_emails = ["admin@pandora.local", "vendas@pandora.local", "manutencao@pandora.local", "logistica@pandora.local", "consulta@pandora.local"]
+        if User.objects.filter(email__in=demo_emails).count() < len(demo_emails):
+            if password is None:
+                password = getpass("Defina a senha dos novos usuários de demonstração (mínimo de 8 caracteres): ")
+                if password != getpass("Confirme a senha: "):
+                    raise CommandError("As senhas não coincidem. Nenhum dado foi criado.")
+            if len(password) < 8:
+                raise CommandError("Use uma senha com pelo menos 8 caracteres. Nenhum dado foi criado.")
 
         groups = {}
         for role, definition in DEFAULT_GROUPS.items():
-            groups[role], _ = AccessGroup.objects.update_or_create(
+            groups[role], _ = AccessGroup.objects.get_or_create(
                 name=definition["name"],
                 defaults={"description": definition["description"], "permissions": definition["permissions"], "is_system": True},
             )
-        logistics_group, _ = AccessGroup.objects.update_or_create(
+        logistics_group, _ = AccessGroup.objects.get_or_create(
             name="Logística",
             defaults={"description": "Planejamento de viagens, veículos e consulta de locações.", "permissions": ["dashboard.view", "logistics.view", "logistics.manage", "rentals.view", "assets.view"], "is_system": False},
         )
+        consultation_group, _ = AccessGroup.objects.get_or_create(name="Consulta financeira", defaults={"description": "Somente consulta de contas e recibos, para testar as permissões.", "permissions": ["commercial.receivables.view"]})
         people = {}
         for key, email, name, role, group in (
             ("admin", "admin@pandora.local", "Administrador PANDORA", User.Role.ADMIN, groups["ADMIN"]),
             ("sales", "vendas@pandora.local", "Marina Costa · Vendas", User.Role.SALES, groups["SALES"]),
             ("tech", "manutencao@pandora.local", "Carlos Almeida · Manutenção", User.Role.MAINTENANCE, groups["MAINTENANCE"]),
             ("driver", "logistica@pandora.local", "Juliana Ribeiro · Logística", User.Role.SALES, logistics_group),
+            ("reader", "consulta@pandora.local", "Consulta financeira · Demonstração", User.Role.SALES, consultation_group),
         ):
-            user, _ = User.objects.get_or_create(email=email, defaults={"full_name": name})
-            user.full_name, user.role, user.access_group = name, role, group
-            user.is_active = True
-            user.is_staff = key == "admin"
-            user.is_superuser = key == "admin"
-            user.set_password(password)
-            user.save()
+            user, created = User.objects.get_or_create(email=email, defaults={"full_name": name, "role": role, "access_group": group, "is_active": True, "is_staff": key == "admin"})
+            if created:
+                user.set_password(password)
+                user.save(update_fields=("password",))
             people[key] = user
 
         customer_data = (
@@ -85,8 +94,11 @@ class Command(BaseCommand):
         )
         customers = {}
         for key, name, kind, document, email, phone, address, notes in customer_data:
-            customers[key], _ = Customer.objects.update_or_create(
-                document=document, defaults={"person_type": kind, "name": name, "email": email, "phone": phone, "address": address, "notes": notes, "is_active": True},
+            match = re.search(r",\s*(\d+),\s*", address)
+            number = match.group(1) if match else ""
+            address = re.sub(r",\s*\d+,\s*", ", ", address, count=1)
+            customers[key], _ = Customer.objects.get_or_create(
+                document=document, defaults={"person_type": kind, "name": name, "email": email, "phone": phone, "address": address, "address_number": number, "address_cep": "13610000", "notes": f"[DEMONSTRAÇÃO] {notes}", "is_active": True, "marketing_opt_in": True},
             )
 
         categories = {}
@@ -98,7 +110,7 @@ class Command(BaseCommand):
             ("energia", "Energia temporária", "290", ["Óleo e combustível", "Tomadas e disjuntores", "Partida e tensão", "Aterramento"]),
             ("acesso", "Acesso e andaimes", "120", ["Travessas e soldas", "Rodízios e travas", "Plataforma", "Guarda-corpo"]),
         ):
-            categories[key], _ = EquipmentCategory.objects.update_or_create(
+            categories[key], _ = EquipmentCategory.objects.get_or_create(
                 name=name, defaults={"description": f"Equipamentos para {name.lower()} em canteiros de obra.", "default_daily_rate": Decimal(rate), "pre_rental_checklist": checklist, "return_checklist": checklist},
             )
         equipment_data = (
@@ -112,8 +124,8 @@ class Command(BaseCommand):
         equipment = {}
         asset_folder = settings.BASE_DIR / "seed_assets" / "equipment"
         for code, name, brand, model, serial, category_key, rate, image, hours in equipment_data:
-            equipment[code], _ = Equipment.objects.update_or_create(
-                internal_code=code, defaults={"name": name, "brand": brand, "model": model, "serial_number": serial, "category": categories[category_key], "daily_rate": Decimal(rate), "current_usage_hours": hours, "technical_details": "Equipamento de demonstração. Conferir checklist e acessórios na entrega."},
+            equipment[code], _ = Equipment.objects.get_or_create(
+                internal_code=code, defaults={"name": name, "brand": brand, "model": model, "serial_number": serial, "category": categories[category_key], "daily_rate": Decimal(rate), "current_usage_hours": hours, "estimated_weight_kg": (150, 110, 180, 30, 190, 90)[int(code[-1])-1], "technical_details": "Equipamento de demonstração. Conferir checklist e acessórios na entrega."},
             )
             if not MediaAsset.objects.filter(equipment=equipment[code], category=MediaAsset.Category.PHOTO).exists():
                 photo = MediaAsset(name=f"Foto de catálogo · {name}", category=MediaAsset.Category.PHOTO, description="Imagem ilustrativa gerada para a base de demonstração.", equipment=equipment[code], uploaded_by=people["admin"])
@@ -126,7 +138,7 @@ class Command(BaseCommand):
             ("truck", "PDR2B34", "Mercedes-Benz", "Accelo 815", Vehicle.Type.TRUCK, 4200, "Equipamentos pesados; exige agendamento de descarga."),
             ("van", "PDR3C45", "Renault", "Master Furgão", Vehicle.Type.VAN, 1500, "Retiradas e entregas urbanas."),
         ):
-            vehicles[key], _ = Vehicle.objects.update_or_create(plate=plate, defaults={"brand": brand, "model": model, "vehicle_type": kind, "capacity_kg": capacity, "notes": notes, "status": Vehicle.Status.AVAILABLE})
+            vehicles[key], _ = Vehicle.objects.get_or_create(plate=plate, defaults={"brand": brand, "model": model, "vehicle_type": kind, "capacity_kg": capacity, "notes": notes, "status": Vehicle.Status.AVAILABLE})
 
         scenarios = (
             ("ORC-CEN-001", "obra", "EQ-001", 2, 5, RentalQuote.Status.APPROVED, True, "80", "0"),
@@ -142,6 +154,11 @@ class Command(BaseCommand):
                 number=number,
                 defaults={"customer": customer, "start_date": today + timedelta(days=start), "end_date": today + timedelta(days=end), "created_by": people["sales"], "conditions": "Locação somente do equipamento. Entrega, combustível e devolução conforme orçamento.", "delivery_transport_required": delivery, "delivery_address": customer.address if delivery else "", "delivery_complement": "Portaria da obra" if delivery else "", "transport_fee": Decimal(fee), "discount_percent": Decimal(discount)},
             )
+            if not created:
+                continue
+            quote.delivery_number = customer.address_number if delivery else ""
+            quote.delivery_cep = customer.address_cep if delivery else ""
+            quote.save(update_fields=("delivery_number", "delivery_cep"))
             if created:
                 RentalItem.objects.create(quote=quote, equipment=equipment[equipment_code], daily_rate=equipment[equipment_code].daily_rate, quantity_days=end - start + 1)
                 quote.recalculate()
@@ -175,6 +192,7 @@ class Command(BaseCommand):
                 quote.status, quote.delivered_by, quote.delivered_at = RentalQuote.Status.ACTIVE, people["sales"], timezone.now() - timedelta(days=max(1, -start))
                 quote.delivery_conditions = "Acessórios conferidos e equipamento entregue funcionando."
                 quote.save(update_fields=("status", "delivered_by", "delivered_at", "delivery_conditions", "updated_at"))
+                quote.items.update(stage="DELIVERED", delivered_at=quote.delivered_at, delivered_by=quote.delivered_by, delivery_conditions=quote.delivery_conditions)
             if target == RentalQuote.Status.ACTIVE:
                 continue
             ensure_inspections(quote, RentalInspection.Type.RETURN)
@@ -182,6 +200,7 @@ class Command(BaseCommand):
                 quote.status, quote.returned_by, quote.returned_at = RentalQuote.Status.RETURNED, people["sales"], timezone.now() + timedelta(days=end)
                 quote.return_conditions = "Recebido no balcão; aguardando inspeção final."
                 quote.save(update_fields=("status", "returned_by", "returned_at", "return_conditions", "updated_at"))
+                quote.items.update(stage="RETURNED", returned_at=quote.returned_at, returned_by=quote.returned_by, return_conditions=quote.return_conditions)
             return_inspection = quote.inspections.get(inspection_type=RentalInspection.Type.RETURN, equipment=equipment[equipment_code])
             if target == RentalQuote.Status.COMPLETED and return_inspection.result == RentalInspection.Result.PENDING:
                 return_inspection.result, return_inspection.condition = RentalInspection.Result.APPROVED, RentalInspection.Condition.GOOD
@@ -193,6 +212,7 @@ class Command(BaseCommand):
             if target == RentalQuote.Status.COMPLETED and quote.status == RentalQuote.Status.RETURNED:
                 quote.status = RentalQuote.Status.COMPLETED
                 quote.save(update_fields=("status", "updated_at"))
+                quote.items.update(stage="COMPLETED", finalized_at=timezone.now())
 
         ServiceOrder.objects.get_or_create(
             number="OS-CEN-CORRETIVA",
@@ -210,8 +230,11 @@ class Command(BaseCommand):
         for item in equipment.values():
             refresh_equipment_status(item)
 
+        from accounts.demo_scenarios import expand_demo
+        expand_demo(people, customers, categories, equipment, vehicles, today, self.stdout)
+
         self.stdout.write(self.style.SUCCESS(
             f"Base fictícia pronta: {Customer.objects.count()} clientes, {Equipment.objects.count()} equipamentos, "
-            f"{MediaAsset.objects.count()} fotos, {Vehicle.objects.count()} veículos, {RentalQuote.objects.count()} orçamentos, "
-            f"{ServiceOrder.objects.count()} OS. Login local: admin@pandora.local / {password}"
+            f"{MediaAsset.objects.filter(category=MediaAsset.Category.PHOTO).count()} fotos, {Vehicle.objects.count()} veículos, {RentalQuote.objects.count()} orçamentos, "
+            f"{ServiceOrder.objects.count()} OS. Senhas e alterações dos usuários existentes foram preservadas."
         ))

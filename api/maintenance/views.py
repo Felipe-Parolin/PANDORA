@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Q
 from rest_framework import status
 from rest_framework.decorators import action
@@ -7,7 +8,8 @@ from rest_framework.viewsets import ModelViewSet
 from accounts.permissions import ACLPermission
 from rentals.services import refresh_equipment_status
 from .models import MaintenancePlan, ServiceOrder
-from .patterns import MaintenanceKitFactory
+from .patterns import MaintenanceKitFactory, MaintenancePlanPrototype
+from assets.models import Equipment
 from .serializers import MaintenancePlanSerializer, ServiceOrderSerializer
 from .services import generate_due_preventive_orders
 
@@ -23,6 +25,33 @@ class MaintenancePlanViewSet(ModelViewSet):
     def sync_due(self, request):
         created = generate_due_preventive_orders()
         return Response({"created": len(created), "order_ids": [order.pk for order in created]})
+
+    @action(detail=True, methods=["post"], url_path="clone")
+    def clone(self, request, pk=None):
+        """Duplica o plano para outros equipamentos (padrão Prototype), sem copiar o histórico."""
+        source = self.get_object()
+        ids = request.data.get("equipment_ids")
+        if not isinstance(ids, list) or not ids or len(ids) > 50 or not all(isinstance(i, int) for i in ids):
+            return Response({"equipment_ids": "Informe de 1 a 50 equipamentos de destino."}, status=status.HTTP_400_BAD_REQUEST)
+        targets = {item.pk: item for item in Equipment.objects.filter(pk__in=ids)}
+        missing = [i for i in ids if i not in targets]
+        if missing:
+            return Response({"equipment_ids": f"Equipamento(s) inexistente(s): {missing}"}, status=status.HTTP_400_BAD_REQUEST)
+        prototype = MaintenancePlanPrototype(source)
+        created, skipped = [], []
+        with transaction.atomic():
+            for equipment_id in dict.fromkeys(ids):
+                equipment = targets[equipment_id]
+                if MaintenancePlan.objects.filter(equipment=equipment, name=source.name).exists():
+                    skipped.append({"equipment": equipment.pk, "reason": "Já existe um plano com este nome no equipamento."})
+                    continue
+                plan = prototype.clone(equipment=equipment)
+                plan.save()
+                created.append(plan)
+        generate_due_preventive_orders()
+        return Response({
+            "created": MaintenancePlanSerializer(created, many=True).data, "skipped": skipped,
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
     def perform_create(self, serializer):
         serializer.save()
@@ -40,7 +69,7 @@ class MaintenancePlanViewSet(ModelViewSet):
 
 
 class ServiceOrderViewSet(ModelViewSet):
-    queryset = ServiceOrder.objects.select_related("equipment", "plan", "opened_by", "technician", "rental_inspection__quote__customer").prefetch_related("activities")
+    queryset = ServiceOrder.objects.select_related("equipment", "plan", "opened_by", "technician", "rental_inspection__quote__customer").prefetch_related("activities", "rental_inspection__quote__items")
     serializer_class = ServiceOrderSerializer
     permission_classes = [ACLPermission]
     acl_view = "maintenance.view"

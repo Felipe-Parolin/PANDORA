@@ -89,9 +89,28 @@ class TextReportProcessor(ReportProcessor):
         return " ".join(content.split()).strip()
 
 
+@dataclass(frozen=True)
+class AudioReport:
+    """Conteúdo bruto de um relato por voz (nunca persistido)."""
+
+    content: bytes
+    filename: str = "relato.webm"
+    content_type: str = "audio/webm"
+
+
 class AudioReportProcessor(ReportProcessor):
+    """Transcreve o áudio; a transcrição deve ser confirmada pelo técnico antes de virar relato."""
+
+    def __init__(self, transcriber=None):
+        self._transcriber = transcriber
+
     def process(self, content):
-        raise NotImplementedError("A transcrição será conectada ao serviço externo em uma fase futura.")
+        transcriber = self._transcriber
+        if transcriber is None:
+            from ai.providers import get_llm_provider  # import tardio: manutenção não depende da IA
+
+            transcriber = get_llm_provider().transcribe
+        return " ".join(transcriber(content.content, content.filename, content.content_type).split())
 
 
 class ReportProcessorCreator(ABC):
@@ -112,6 +131,10 @@ class TextReportProcessorCreator(ReportProcessorCreator):
 class AudioReportProcessorCreator(ReportProcessorCreator):
     def create_processor(self):
         return AudioReportProcessor()
+
+    def create_processor_with(self, transcriber):
+        """Variante com transcritor injetado (permite trocar o provedor e testar sem rede)."""
+        return AudioReportProcessor(transcriber)
 
 
 class ReportProcessorFactory:
@@ -217,3 +240,38 @@ class MaintenanceKitFactory:
     def create(kind):
         factory = PreventiveMaintenanceFactory() if kind == ServiceOrder.Type.PREVENTIVE else CorrectiveMaintenanceFactory()
         return MaintenancePlanningService(factory).prepare()
+
+
+class Prototype(ABC):
+    """Contrato do padrão Prototype: o objeto sabe se clonar sem expor como é construído."""
+
+    @abstractmethod
+    def clone(self, **overrides): ...
+
+
+class MaintenancePlanPrototype(Prototype):
+    """Usa um plano existente como protótipo para outros equipamentos.
+
+    O clone herda modalidade, periodicidade, criticidade e checklist (copiados em profundidade),
+    mas nasce sem histórico: sem última manutenção, sem horas de referência e com nova data de
+    vencimento calculada a partir do próprio intervalo.
+    """
+
+    INHERITED = (
+        "name", "maintenance_type", "interval_days", "usage_limit", "advance_notice_days",
+        "advance_notice_usage_hours", "criticality", "checklist", "active",
+    )
+
+    def __init__(self, plan):
+        self._plan = plan
+
+    def clone(self, **overrides):
+        from copy import deepcopy
+
+        from .models import MaintenancePlan
+
+        data = {field: deepcopy(getattr(self._plan, field)) for field in self.INHERITED}
+        data.update(overrides)
+        if data.get("equipment") is None:
+            raise ValueError("O clone precisa de um equipamento de destino.")
+        return MaintenancePlan(**data)  # não persiste: quem chama decide quando salvar

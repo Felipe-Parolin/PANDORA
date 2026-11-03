@@ -12,6 +12,7 @@ def validate_file_size(value):
 class EquipmentCategory(models.Model):
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True)
+    parent = models.ForeignKey("self", on_delete=models.PROTECT, null=True, blank=True, related_name="subcategories")
     default_daily_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     pre_rental_checklist = models.JSONField(default=list, blank=True)
     return_checklist = models.JSONField(default=list, blank=True)
@@ -42,6 +43,7 @@ class Equipment(models.Model):
     qr_code_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.AVAILABLE)
     daily_rate = models.DecimalField(max_digits=12, decimal_places=2)
+    estimated_weight_kg = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     acquisition_date = models.DateField(null=True, blank=True)
     technical_details = models.TextField(blank=True)
     current_usage_hours = models.PositiveIntegerField(default=0)

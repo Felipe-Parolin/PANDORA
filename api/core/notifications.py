@@ -14,5 +14,14 @@ def notify(recipients, *, kind, title, message, target_url, event_key):
             )
 
 
-def users_with_acl(permission):
-    return [user for user in User.objects.filter(is_active=True).select_related("access_group") if user.has_acl(permission)]
+def users_with_acl(permission, *, exclude=()):
+    """Active users who hold ``permission``, minus whoever already knows about the event.
+
+    ``exclude`` takes users (or ``None``): the person who performed the action and anyone who
+    gets a more specific, personal notification for the same event should not be notified twice.
+    """
+    excluded = {user.pk for user in exclude if user}
+    return [
+        user for user in User.objects.filter(is_active=True).select_related("access_group")
+        if user.pk not in excluded and user.has_acl(permission)
+    ]
