@@ -33,8 +33,10 @@ def before_task_save(sender, instance, **kwargs):
 def order_notification(sender, instance, created, **kwargs):
     previous = instance._previous_state or {}
     if created:
+        # Quem abriu o chamado e o técnico já designado sabem dele; avisa só quem faz a triagem.
         notify(
-            users_with_acl("maintenance.view"), kind=Notification.Kind.MAINTENANCE,
+            users_with_acl("maintenance.manage", exclude=(instance.opened_by, instance.technician)),
+            kind=Notification.Kind.MAINTENANCE,
             title=f"Novo chamado {instance.number}",
             message=f"{instance.equipment.name}: {instance.get_maintenance_type_display()}.",
             target_url=f"/manutencao?order={instance.pk}", event_key=f"order:{instance.pk}:created",
@@ -48,9 +50,10 @@ def order_notification(sender, instance, created, **kwargs):
         )
     if not created and previous.get("status") != instance.status and instance.status == ServiceOrder.Status.COMPLETED:
         quote = instance.rental_inspection.quote if instance.rental_inspection_id else None
-        recipients = [quote.created_by] if quote else users_with_acl("maintenance.view")
+        # Com locação vinculada, quem responde pelo orçamento acompanha; na oficina, quem libera o equipamento.
+        recipients = [quote.created_by] if quote else users_with_acl("maintenance.release", exclude=(instance.technician,))
         notify(
-            recipients, kind=Notification.Kind.MAINTENANCE,
+            recipients, kind=Notification.Kind.RENTAL if quote else Notification.Kind.MAINTENANCE,
             title=f"Chamado concluído: {instance.number}",
             message=f"{instance.equipment.name} teve o atendimento concluído.",
             target_url=f"/locacoes?quote={quote.number}" if quote else f"/manutencao?order={instance.pk}",
@@ -64,10 +67,10 @@ def quote_notification(sender, instance, created, **kwargs):
     if created or previous.get("status") == instance.status:
         return
     if instance.status == RentalQuote.Status.APPROVED:
-        recipients = users_with_acl("maintenance.view")
+        recipients = users_with_acl("maintenance.manage", exclude=(instance.created_by,))
         title, message = f"Reserva aprovada: {instance.number}", "Faça as inspeções pré-locação antes da entrega."
     elif instance.status == RentalQuote.Status.RETURNED:
-        recipients = users_with_acl("maintenance.view")
+        recipients = users_with_acl("maintenance.manage")
         title, message = f"Devolução registrada: {instance.number}", "A inspeção final foi encaminhada para a manutenção."
     elif instance.status == RentalQuote.Status.COMPLETED:
         recipients = [instance.created_by]
@@ -83,7 +86,7 @@ def quote_notification(sender, instance, created, **kwargs):
 def transport_notification(sender, instance, created, **kwargs):
     previous = instance._previous_state or {}
     if created:
-        notify(users_with_acl("logistics.view"), kind=Notification.Kind.TRANSPORT,
+        notify(users_with_acl("logistics.manage"), kind=Notification.Kind.TRANSPORT,
                title=f"Viagem a planejar: {instance.quote.number}",
                message=f"{instance.get_leg_display()} precisa de veículo e programação.",
                target_url="/transporte", event_key=f"transport:{instance.pk}:created")

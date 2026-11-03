@@ -1,4 +1,6 @@
 PERMISSION_CATALOG = [
+    {"code": "commercial.receivables.view", "label": "Consultar contas a receber e recibos", "module": "Comercial"},
+    {"code": "commercial.receivables.manage", "label": "Lançar contas, alterar vencimentos e registrar pagamentos", "module": "Comercial"},
     {"code": "dashboard.view", "label": "Visualizar painel", "module": "Visão geral"},
     {"code": "accounts.users.view", "label": "Consultar funcionários", "module": "Pessoas e acessos"},
     {"code": "accounts.users.manage", "label": "Cadastrar, editar e excluir funcionários", "module": "Pessoas e acessos"},
@@ -12,6 +14,8 @@ PERMISSION_CATALOG = [
     {"code": "maintenance.view", "label": "Consultar manutenção e ordens", "module": "Manutenção"},
     {"code": "maintenance.manage", "label": "Cadastrar, editar e excluir manutenções", "module": "Manutenção"},
     {"code": "maintenance.release", "label": "Liberar equipamento após manutenção", "module": "Manutenção"},
+    {"code": "ai.assist", "label": "Usar o assistente de IA (hipóteses, manuais, voz)", "module": "Inteligência artificial"},
+    {"code": "ai.audit", "label": "Auditar consultas feitas à IA de todos os usuários", "module": "Inteligência artificial"},
     {"code": "logistics.view", "label": "Consultar viagens e veículos", "module": "Transporte"},
     {"code": "logistics.manage", "label": "Planejar viagens e cadastrar veículos", "module": "Transporte"},
     {"code": "rentals.view", "label": "Consultar orçamentos e locações", "module": "Locações"},
@@ -39,6 +43,7 @@ DEFAULT_GROUPS = {
             "assets.view", "media.view", "media.manage", "rentals.view", "rentals.manage",
             "rentals.approve", "rentals.inspect", "rentals.dispatch", "rentals.extend", "rentals.return",
             "logistics.view", "logistics.manage",
+            "commercial.receivables.view", "commercial.receivables.manage",
         ],
     },
     "MAINTENANCE": {
@@ -47,7 +52,7 @@ DEFAULT_GROUPS = {
         "permissions": [
             "dashboard.view", "accounts.users.view", "assets.view", "media.view", "media.manage",
             "maintenance.view", "maintenance.manage", "maintenance.release", "rentals.view", "rentals.inspect",
-            "rentals.return", "logistics.view",
+            "rentals.return", "logistics.view", "ai.assist",
         ],
     },
 }

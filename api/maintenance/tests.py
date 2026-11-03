@@ -176,7 +176,8 @@ class PeriodicMaintenanceTests(TestCase):
         self.assertEqual(generate_due_preventive_orders(), [])
         self.assertEqual(plan.service_orders.count(), 1)
         self.equipment.refresh_from_db()
-        self.assertEqual(self.equipment.status, Equipment.Status.MAINTENANCE)
+        # A preventiva apenas agendada não imobiliza o equipamento; a execução sim.
+        self.assertEqual(self.equipment.status, Equipment.Status.AVAILABLE)
 
         client = APIClient()
         client.force_authenticate(self.technician)

@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { reactive } from 'vue'
+import { mutationMessage, showNotice } from './notices'
 
 export const auth = reactive({
   user: JSON.parse(localStorage.getItem('pandora_user') || 'null'),
@@ -16,7 +17,11 @@ api.interceptors.request.use((config) => {
 })
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const message = mutationMessage(response.config.url, response.config.method)
+    if (message && !response.config.silentNotification) showNotice(message)
+    return response
+  },
   (error) => {
     if (error.response?.status === 401 && !error.config.url.includes('/auth/login')) logout()
     return Promise.reject(error)
@@ -50,6 +55,18 @@ export function logout() {
 }
 
 export const rows = (data) => data?.results || data || []
+// Listas de cadastro e opções precisam considerar todas as páginas da API.
+export async function fetchAll(url, config = {}) {
+  const result = []
+  let page = 1, more = true
+  while (more) {
+    const response = await api.get(url, { ...config, params: { ...config.params, page } })
+    result.push(...rows(response.data))
+    more = Boolean(response.data?.next)
+    page += 1
+  }
+  return { data: { results: result, count: result.length, next: null } }
+}
 export const can = (permission) => Boolean(auth.user?.permissions?.includes('*') || auth.user?.permissions?.includes(permission))
 export const canAny = (permissions) => (Array.isArray(permissions) ? permissions : [permissions]).some(can)
 export const money = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value || 0))

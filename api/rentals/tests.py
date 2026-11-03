@@ -47,6 +47,21 @@ class RentalRulesTests(TestCase):
         quote.recalculate()
         self.assertEqual(quote.total, Decimal("300"))
 
+    def test_availability_endpoint_is_paginated_and_keeps_block_reasons(self):
+        for index in range(51):
+            Equipment.objects.create(
+                category=self.category, name=f"Equipamento extra {index}", brand="Marca",
+                model="M1", serial_number=f"EXTRA-SER-{index}", internal_code=f"EQ-{index:03d}", daily_rate=Decimal("100"),
+            )
+        response = self.client.get("/api/rental-quotes/availability/", {
+            "start": timezone.localdate().isoformat(),
+            "end": (timezone.localdate() + timedelta(days=1)).isoformat(),
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 52)
+        self.assertEqual(len(response.data["available"]) + len(response.data["blocked"]), 50)
+        self.assertEqual(response.data["next_page"], 2)
+
     def test_approved_quote_blocks_overlap(self):
         quote = RentalQuote.objects.create(customer=self.customer, start_date=timezone.localdate(), end_date=timezone.localdate() + timedelta(days=2), status=RentalQuote.Status.APPROVED, created_by=self.user)
         RentalItem.objects.create(quote=quote, equipment=self.equipment, daily_rate=100, quantity_days=3, total=300)
@@ -89,6 +104,7 @@ class RentalRulesTests(TestCase):
             "delivery_address": "Rua A, 10, Leme/SP",
             "delivery_cep": "13610050",
             "transport_fee": "20.00",
+            "estimated_transport_fee": "20.00",
             "discount_percent": "10.00",
         }
         serializer = RentalQuoteSerializer(data=payload, context={"request": SimpleNamespace(user=self.user)})
@@ -100,6 +116,24 @@ class RentalRulesTests(TestCase):
         quote.recalculate()
         self.assertEqual(quote.discount, Decimal("24.00"))
         self.assertEqual(quote.total, Decimal("216.00"))
+
+    def test_manual_freight_adjustment_requires_justification(self):
+        payload = {
+            "customer": self.customer.pk,
+            "start_date": timezone.localdate(),
+            "end_date": timezone.localdate(),
+            "items": [{"equipment_id": self.equipment.pk, "daily_rate": "100.00", "quantity_days": 1}],
+            "delivery_transport_required": True,
+            "delivery_address": "Rua A, 10, Leme/SP",
+            "transport_fee": "45.00",
+            "estimated_transport_fee": "30.00",
+        }
+        serializer = RentalQuoteSerializer(data=payload, context={"request": SimpleNamespace(user=self.user)})
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("transport_fee_adjustment_reason", serializer.errors)
+        payload["transport_fee_adjustment_reason"] = "Acesso rural com custo adicional de deslocamento."
+        serializer = RentalQuoteSerializer(data=payload, context={"request": SimpleNamespace(user=self.user)})
+        self.assertTrue(serializer.is_valid(), serializer.errors)
 
     def test_percentage_and_cep_validation(self):
         payload = {
@@ -120,11 +154,11 @@ class RentalRulesTests(TestCase):
 
     @override_settings(FREIGHT_ORIGIN_CEP="13610050", FREIGHT_ORIGIN_LABEL="Origem de teste", FREIGHT_ORIGIN_PROVISIONAL=False,
                        FREIGHT_MINIMUM_PER_LEG=Decimal("25"), FREIGHT_RATE_PER_KM=Decimal("3"), FREIGHT_ROAD_FACTOR=Decimal("1.3"))
-    @patch("rentals.freight.lookup_cep")
-    def test_freight_estimate_has_minimum_and_missing_coordinate_fallback(self, mocked_lookup):
-        mocked_lookup.return_value = {"latitude": -22.18556, "longitude": -47.39028}
+    @patch("logistics.routing.road_route", return_value={"distance_m": 0, "duration_seconds": 0})
+    @patch("logistics.geo.geocode_precise_address", return_value=(-22.18556, -47.39028))
+    def test_freight_estimate_has_minimum_and_missing_coordinate_fallback(self, mocked_point, mocked_route):
         destination = {"latitude": -22.18556, "longitude": -47.39028}
-        estimate = estimate_freight(destination)
+        estimate = estimate_freight(destination, address="Rua de teste, 120, Leme/SP")
         self.assertEqual(estimate["fee"], "25.00")
         self.assertEqual(estimate["distance_km"], "0.0")
         self.assertEqual(estimate["origin_label"], "Origem de teste")
@@ -179,6 +213,85 @@ class RentalRulesTests(TestCase):
         self.assertEqual(service_order.data["rental_customer_name"], self.customer.name)
         self.assertEqual(service_order.data["rental_start_date"], quote.start_date.isoformat())
         self.assertIsNone(availability_reason(self.equipment, quote.start_date, quote.end_date, ignore_quote=quote))
+
+    def test_pending_final_inspection_blocks_new_reservation(self):
+        self.equipment.status = Equipment.Status.INSPECTION
+        self.equipment.save(update_fields=("status",))
+        reason = availability_reason(
+            self.equipment,
+            timezone.localdate(),
+            timezone.localdate() + timedelta(days=1),
+        )
+        # A inspeção de devolução deve ser concluída antes de uma nova reserva.
+        self.assertEqual(reason, "Equipamento bloqueado pela situação operacional.")
+
+    def test_blocked_inspection_preserves_technical_notes_without_duplicating_them(self):
+        from rentals.serializers import RentalInspectionSerializer
+        for kind in (RentalInspection.Type.PRE_RENTAL, RentalInspection.Type.RETURN):
+            quote = self.create_quote(status=RentalQuote.Status.APPROVED if kind == RentalInspection.Type.PRE_RENTAL else RentalQuote.Status.RETURNED)
+            inspection = RentalInspection.objects.create(quote=quote, equipment=self.equipment, inspection_type=kind, checklist=[])
+            order = ServiceOrder.objects.create(equipment=self.equipment, rental_inspection=inspection, maintenance_type="PRE_RENTAL" if kind == "PRE_RENTAL" else "POST_RENTAL", symptoms="Conferir", diagnosis="Nota anterior do técnico")
+            for _ in range(2):
+                serializer = RentalInspectionSerializer(inspection, data={"result": "BLOCKED", "observations": "Proteção quebrada"}, partial=True, context={"request": SimpleNamespace(user=self.technician)})
+                self.assertTrue(serializer.is_valid(), serializer.errors)
+                serializer.save()
+            order.refresh_from_db()
+            self.assertIn("Nota anterior do técnico", order.diagnosis)
+            self.assertEqual(order.diagnosis.count("Proteção quebrada"), 1)
+
+    def test_maintenance_status_still_blocks_rental(self):
+        self.equipment.status = Equipment.Status.MAINTENANCE
+        self.equipment.save(update_fields=("status",))
+        reason = availability_reason(
+            self.equipment,
+            timezone.localdate(),
+            timezone.localdate() + timedelta(days=1),
+        )
+        self.assertEqual(reason, "Equipamento bloqueado pela situação operacional.")
+
+    def test_scheduled_preventive_order_does_not_block_reservation(self):
+        MaintenancePlan.objects.create(
+            equipment=self.equipment, name="Revisão", maintenance_type=MaintenancePlan.Type.PREVENTIVE,
+            interval_days=30, next_due_date=timezone.localdate() - timedelta(days=5),
+        )
+        from maintenance.services import generate_due_preventive_orders
+        self.assertEqual(len(generate_due_preventive_orders()), 1)
+        self.equipment.refresh_from_db()
+        self.assertNotEqual(self.equipment.status, Equipment.Status.MAINTENANCE)
+        quote = self.create_quote()
+        response = self.client.post(f"/api/rental-quotes/{quote.pk}/reserve/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(quote.inspections.filter(inspection_type=RentalInspection.Type.PRE_RENTAL).exists())
+        self.assertTrue(ServiceOrder.objects.filter(
+            rental_inspection__quote=quote,
+            maintenance_type=ServiceOrder.Type.PRE_RENTAL,
+        ).exists())
+
+    def test_stale_maintenance_status_is_healed_on_reserve(self):
+        self.equipment.status = Equipment.Status.MAINTENANCE
+        self.equipment.save(update_fields=("status",))
+        quote = self.create_quote()
+        response = self.client.post(f"/api/rental-quotes/{quote.pk}/reserve/")
+        self.assertEqual(response.status_code, 200, response.data)
+
+    def test_orphan_pre_rental_order_from_draft_quote_does_not_block_availability(self):
+        quote = self.create_quote()
+        inspection = RentalInspection.objects.create(
+            quote=quote,
+            equipment=self.equipment,
+            inspection_type=RentalInspection.Type.PRE_RENTAL,
+        )
+        ServiceOrder.objects.create(
+            equipment=self.equipment,
+            rental_inspection=inspection,
+            maintenance_type=ServiceOrder.Type.PRE_RENTAL,
+            priority="ALTA",
+            symptoms="OS de preparação criada antes da aprovação.",
+            opened_by=self.user,
+        )
+        self.assertIsNone(availability_reason(
+            self.equipment, quote.start_date, quote.end_date, ignore_quote=quote
+        ))
 
     def test_critical_usage_maintenance_blocks_availability(self):
         self.equipment.current_usage_hours = 120

@@ -12,6 +12,8 @@ from customers.views import CustomerViewSet
 from maintenance.views import MaintenancePlanViewSet, ServiceOrderViewSet
 from logistics.views import TransportTaskViewSet, VehicleViewSet
 from rentals.views import RentalInspectionViewSet, RentalQuoteViewSet
+from commercial.views import EquipmentPackageViewSet, PurchaseRecommendationViewSet, MarketingCampaignViewSet, BillingAnalyticsView, MarketingUnsubscribeView
+from commercial.finance_views import ReceivableViewSet, PaymentViewSet
 
 router = DefaultRouter()
 router.register("users", UserViewSet, basename="user")
@@ -27,14 +29,22 @@ router.register("rental-inspections", RentalInspectionViewSet, basename="rental-
 router.register("vehicles", VehicleViewSet, basename="vehicle")
 router.register("transport-tasks", TransportTaskViewSet, basename="transport-task")
 router.register("notifications", NotificationViewSet, basename="notification")
+router.register("packages", EquipmentPackageViewSet, basename="package")
+router.register("purchase-recommendations", PurchaseRecommendationViewSet, basename="purchase-recommendation")
+router.register("marketing-campaigns", MarketingCampaignViewSet, basename="marketing-campaign")
+router.register("receivables", ReceivableViewSet, basename="receivable")
+router.register("payments", PaymentViewSet, basename="payment")
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/health/", HealthView.as_view(), name="health"),
     path("api/dashboard/", DashboardView.as_view(), name="dashboard"),
+    path("api/billing/analytics/", BillingAnalyticsView.as_view(), name="billing-analytics"),
+    path("api/marketing/unsubscribe/<uuid:token>/", MarketingUnsubscribeView.as_view(), name="marketing-unsubscribe"),
     path("api/auth/login/", EmailTokenObtainPairView.as_view(), name="login"),
     path("api/auth/refresh/", TokenRefreshView.as_view(), name="refresh"),
     path("api/auth/me/", CurrentUserView.as_view(), name="me"),
+    path("api/ai/", include("ai.urls")),
     path("api/", include(router.urls)),
 ]
 

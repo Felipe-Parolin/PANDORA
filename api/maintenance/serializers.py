@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.utils import timezone
+from django.db import transaction
 from rest_framework import serializers
 from .models import MaintenanceActivity, MaintenancePlan, ServiceOrder
 from .patterns import ServiceOrderOpeningDirector
@@ -8,6 +9,7 @@ from .services import maintenance_alert_status, plan_due_date, plan_due_usage_ho
 
 
 class MaintenanceActivitySerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False, min_value=1)
     class Meta:
         model = MaintenanceActivity
         fields = "__all__"
@@ -59,8 +61,9 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
     rental_quote_number = serializers.CharField(source="rental_inspection.quote.number", read_only=True)
     rental_quote_status = serializers.CharField(source="rental_inspection.quote.status", read_only=True)
     rental_customer_name = serializers.CharField(source="rental_inspection.quote.customer.name", read_only=True)
-    rental_start_date = serializers.DateField(source="rental_inspection.quote.start_date", read_only=True)
-    rental_end_date = serializers.DateField(source="rental_inspection.quote.end_date", read_only=True)
+    rental_start_date = serializers.SerializerMethodField()
+    rental_end_date = serializers.SerializerMethodField()
+    rental_item_stage = serializers.SerializerMethodField()
     inspection_result = serializers.CharField(source="rental_inspection.result", read_only=True)
     activities = MaintenanceActivitySerializer(many=True, required=False)
 
@@ -68,6 +71,24 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
         model = ServiceOrder
         fields = "__all__"
         read_only_fields = ("opened_by", "number", "public_id", "opened_at", "rental_inspection")
+
+    def get_rental_item_stage(self, obj):
+        if not obj.rental_inspection_id:
+            return None
+        line = next((line for line in obj.rental_inspection.quote.items.all() if line.equipment_id == obj.equipment_id), None)
+        return line.stage if line else None
+
+    def _rental_line(self, obj):
+        if obj.rental_inspection_id:
+            return next((line for line in obj.rental_inspection.quote.items.all() if line.equipment_id == obj.equipment_id), None)
+
+    def get_rental_start_date(self, obj):
+        line = self._rental_line(obj)
+        return line.start_date.isoformat() if line else None
+
+    def get_rental_end_date(self, obj):
+        line = self._rental_line(obj)
+        return line.end_date.isoformat() if line else None
 
     def create(self, validated_data):
         activities = validated_data.pop("activities", [])
@@ -83,9 +104,27 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
         MaintenanceActivity.objects.bulk_create([MaintenanceActivity(service_order=order, **item) for item in activities])
         return order
 
+    @transaction.atomic
     def update(self, instance, validated_data):
+        from assets.models import Equipment
+        from rentals.models import RentalQuote
+        if instance.rental_inspection_id:
+            RentalQuote.objects.select_for_update().get(pk=instance.rental_inspection.quote_id)
+        Equipment.objects.select_for_update().get(pk=instance.equipment_id)
+        instance = ServiceOrder.objects.select_for_update().get(pk=instance.pk)
+        self.instance = instance
+        validated_data = self.validate(validated_data)
+        activities = validated_data.pop("activities", None)
         previous_status = instance.status
         order = super().update(instance, validated_data)
+        if activities is not None:
+            # Atualiza os pontos da própria OS; omitir um ponto não apaga seu histórico.
+            for item in activities:
+                activity_id = item.pop("id", None)
+                if activity_id:
+                    order.activities.filter(pk=activity_id).update(**item)
+                else:
+                    order.activities.create(**item)
         if previous_status != ServiceOrder.Status.COMPLETED and order.status == ServiceOrder.Status.COMPLETED and order.plan_id:
             plan = order.plan
             plan.last_service_date = timezone.localdate()
@@ -94,6 +133,15 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
                 plan.next_due_date = plan.last_service_date + timedelta(days=plan.interval_days)
             plan.save(update_fields=("last_service_date", "last_service_usage_hours", "next_due_date"))
         return order
+
+    def validate_activities(self, value):
+        if len(value) > 100:
+            raise serializers.ValidationError("Use no máximo 100 pontos por atendimento.")
+        ids = [item["id"] for item in value if "id" in item]
+        allowed = set(self.instance.activities.values_list("id", flat=True)) if self.instance else set()
+        if len(ids) != len(set(ids)) or not set(ids).issubset(allowed):
+            raise serializers.ValidationError("Os pontos devem pertencer a esta OS e não podem se repetir.")
+        return value
 
     def validate(self, attrs):
         if self.instance:
@@ -108,7 +156,8 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
             inspection = self.instance.rental_inspection
             if inspection.inspection_type == "PRE_RENTAL":
                 cancelled_repair = inspection.quote.status == "CANCELLED" and inspection.result == "BLOCKED"
-                if inspection.quote.status != "APPROVED" and not cancelled_repair:
+                line = inspection.quote.items.filter(equipment=inspection.equipment).first()
+                if (inspection.quote.status not in {"APPROVED", "ACTIVE"} or not line or line.stage != "PENDING") and not cancelled_repair:
                     raise serializers.ValidationError("Este chamado de pré-locação está encerrado para alterações.")
                 if any(key in attrs for key in ("equipment", "maintenance_type")) or ("released" in attrs and not cancelled_repair):
                     raise serializers.ValidationError("O equipamento, o tipo e a liberação deste chamado são controlados pela reserva.")
@@ -139,4 +188,15 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"released": "Seu grupo não possui permissão para liberar equipamentos."})
         if released and (status != ServiceOrder.Status.COMPLETED or not tests.strip() or not technician):
             raise serializers.ValidationError("A liberação exige OS concluída, testes finais e técnico responsável.")
+        if status == ServiceOrder.Status.COMPLETED and not getattr(self.instance, "rental_inspection_id", None):
+            # Considera também itens existentes omitidos na atualização parcial.
+            existing = {item.pk: item.completed for item in self.instance.activities.all()} if self.instance else {}
+            new = []
+            for item in attrs.get("activities", []):
+                if item.get("id"):
+                    existing[item["id"]] = item.get("completed", existing[item["id"]])
+                else:
+                    new.append(item.get("completed", False))
+            if not all([*existing.values(), *new]):
+                raise serializers.ValidationError({"activities": "Conclua todos os pontos do checklist antes de encerrar a OS."})
         return attrs

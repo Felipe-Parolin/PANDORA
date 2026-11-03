@@ -1,63 +1,43 @@
 <script setup>
-import { useRoute, useRouter } from 'vue-router'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { LayoutDashboard, UsersRound, Wrench, PackageOpen, ClipboardList, Bell, Search, LogOut, Menu, X, Truck } from 'lucide-vue-next'
-import { api, auth, canAny, logout } from '../services/api'
+import { formatPhone } from '../services/formatters'
+import { useRoute } from 'vue-router'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { LayoutDashboard, UsersRound, Wrench, PackageOpen, ClipboardList, LogOut, Menu, X, Truck, ChartNoAxesCombined, Sparkles, UserRound, ShieldCheck, Mail, Phone } from 'lucide-vue-next'
+import { auth, canAny, logout, refreshCurrentUser } from '../services/api'
+import HeaderClock from './HeaderClock.vue'
+import NotificationCenter from './NotificationCenter.vue'
+import ModalDialog from './ModalDialog.vue'
 
 const route = useRoute()
-const router = useRouter()
-const mobileOpen = ref(false)
-const notificationsOpen = ref(false)
-const notifications = ref([])
-const unreadCount = ref(0)
-const notificationError = ref('')
-let notificationTimer
-
-async function loadNotifications() {
-  if (!auth.token) return
-  try {
-    const { data } = await api.get('/notifications/')
-    notifications.value = data.results
-    unreadCount.value = data.unread_count
-    notificationError.value = ''
-  } catch {
-    notificationError.value = 'Não foi possível carregar as notificações.'
-  }
+const mobileOpen = ref(false), profileOpen = ref(false), profileLoading = ref(false), profileError = ref('')
+async function openProfile() {
+  profileOpen.value = true; profileLoading.value = true; profileError.value = ''
+  try { await refreshCurrentUser() }
+  catch { profileError.value = 'Não foi possível atualizar o perfil. Os dados exibidos são os da sessão atual.' }
+  finally { profileLoading.value = false }
 }
-
-async function openNotification(item) {
-  try {
-    if (!item.read_at) await api.post(`/notifications/${item.id}/read/`)
-  } catch {
-    notificationError.value = 'Não foi possível marcar a notificação como lida.'
-  }
-  await loadNotifications()
-  notificationsOpen.value = false
-  if (item.target_url?.startsWith('/') && !item.target_url.startsWith('//')) router.push(item.target_url)
-}
-
-async function markAllRead() {
-  try {
-    await api.post('/notifications/read-all/')
-    await loadNotifications()
-  } catch {
-    notificationError.value = 'Não foi possível marcar as notificações como lidas.'
-  }
-}
-
-onMounted(() => {
-  loadNotifications()
-  notificationTimer = window.setInterval(loadNotifications, 30000)
-})
-onUnmounted(() => window.clearInterval(notificationTimer))
-const nav = computed(() => [
-  { to: '/', label: 'Visão geral', icon: LayoutDashboard, permission: 'dashboard.view' },
-  { to: '/pessoas', label: 'Pessoas e acessos', icon: UsersRound, permission: ['customers.view', 'accounts.users.view', 'accounts.groups.manage'] },
-  { to: '/equipamentos', label: 'Equipamentos', icon: PackageOpen, permission: 'assets.view' },
-  { to: '/manutencao', label: 'Manutenção', icon: Wrench, permission: 'maintenance.view' },
-  { to: '/locacoes', label: 'Locações', icon: ClipboardList, permission: 'rentals.view' },
-  { to: '/transporte', label: 'Transporte', icon: Truck, permission: 'logistics.view' },
-].filter(item => canAny(item.permission)))
+const closeOnEscape = event => { if (event.key === 'Escape') mobileOpen.value = false }
+watch(() => route.fullPath, () => { mobileOpen.value = false; profileOpen.value = false })
+watch(() => auth.user?.id, () => { profileOpen.value = false })
+onMounted(() => document.addEventListener('keydown', closeOnEscape))
+onUnmounted(() => document.removeEventListener('keydown', closeOnEscape))
+const navGroups = computed(() => [
+  { label: 'VISÃO GERAL', items: [{ to: '/', label: 'Painel de controle', icon: LayoutDashboard, permission: 'dashboard.view' }] },
+  { label: 'CADASTROS', items: [
+    { to: '/pessoas', label: 'Clientes e usuários', icon: UsersRound, permission: ['customers.view', 'accounts.users.view', 'accounts.groups.manage'] },
+    { to: '/equipamentos', label: 'Equipamentos', icon: PackageOpen, permission: 'assets.view' },
+    { to: '/veiculos', label: 'Veículos', icon: Truck, permission: 'logistics.view' },
+  ] },
+  { label: 'OPERAÇÃO', items: [
+    { to: '/locacoes', label: 'Locações e reservas', icon: ClipboardList, permission: 'rentals.view' },
+    { to: '/manutencao', label: 'Manutenção', icon: Wrench, permission: 'maintenance.view' },
+    { to: '/transporte', label: 'Logística e viagens', icon: Truck, permission: 'logistics.view' },
+  ] },
+  { label: 'GESTÃO', items: [
+    { to: '/comercial', label: 'Comercial', icon: ChartNoAxesCombined, permission: ['rentals.view', 'assets.view', 'customers.view', 'commercial.receivables.view'] },
+    { to: '/assistente', label: 'Assistente de IA', icon: Sparkles, permission: 'ai.assist' },
+  ] },
+].map(group => ({ ...group, items: group.items.filter(item => canAny(item.permission)) })).filter(group => group.items.length))
 const active = (path) => path === '/' ? route.path === '/' : route.path.startsWith(path)
 </script>
 
@@ -70,44 +50,32 @@ const active = (path) => path === '/' ? route.path === '/' : route.path.startsWi
         <div><strong>PANDORA</strong><span>Locação & manutenção</span></div>
         <button class="icon-btn sidebar-close" @click="mobileOpen = false"><X :size="20" /></button>
       </div>
-      <div class="nav-caption">OPERAÇÃO</div>
-      <nav>
-        <router-link v-for="item in nav" :key="item.to" :to="item.to" :class="{ active: active(item.to) }" @click="mobileOpen = false">
-          <component :is="item.icon" :size="19" /><span>{{ item.label }}</span>
-        </router-link>
-      </nav>
-      <div class="sidebar-footer">
-        <div class="avatar">{{ auth.user?.full_name?.charAt(0) || 'P' }}</div>
-        <div class="user-meta"><strong>{{ auth.user?.full_name || 'Usuário' }}</strong><span>{{ auth.user?.access_group_name || auth.user?.role_label || 'PANDORA' }}</span></div>
-        <button class="icon-btn" title="Sair" @click="logout"><LogOut :size="18" /></button>
-      </div>
+      <section v-for="group in navGroups" :key="group.label" class="nav-group">
+        <div class="nav-caption">{{ group.label }}</div>
+        <nav>
+          <router-link v-for="item in group.items" :key="item.to" :to="item.to" :class="{ active: active(item.to) }" @click="mobileOpen = false">
+            <component :is="item.icon" :size="19" /><span>{{ item.label }}</span>
+          </router-link>
+        </nav>
+      </section>
+      <div class="sidebar-footer"><strong class="sidebar-group-name">{{ auth.user?.access_group_name || auth.user?.role_label || 'PANDORA' }}</strong><button type="button" class="icon-btn sidebar-logout" aria-label="Sair do sistema" title="Sair do sistema" @click="logout"><LogOut :size="19" /></button></div>
     </aside>
     <section class="workspace">
       <header class="topbar">
         <button class="icon-btn menu-btn" @click="mobileOpen = true"><Menu :size="22" /></button>
-        <div class="global-search"><Search :size="18" /><input aria-label="Busca global" placeholder="Buscar equipamento, cliente ou OS..." /></div>
+        <HeaderClock />
         <div class="top-actions">
-          <div class="notification-wrap">
-            <button class="icon-btn notification-trigger" type="button" :aria-expanded="notificationsOpen" aria-label="Notificações" @click="notificationsOpen = !notificationsOpen; if (notificationsOpen) loadNotifications()">
-              <Bell :size="20" /><span v-if="unreadCount" class="notification-count">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
-            </button>
-            <div v-if="notificationsOpen" class="notification-panel" role="dialog" aria-label="Notificações">
-              <header><strong>Notificações</strong><button v-if="unreadCount" type="button" @click="markAllRead">Marcar todas como lidas</button></header>
-              <p v-if="notificationError" class="notification-error">{{ notificationError }}</p>
-              <p v-if="!notifications.length" class="notification-empty">Nenhuma notificação por enquanto.</p>
-              <div v-else class="notification-list">
-                <button v-for="item in notifications" :key="item.id" type="button" :class="{ unread: !item.read_at }" @click="openNotification(item)">
-                  <span class="notification-kind">{{ item.kind === 'RENTAL' ? 'Locação' : item.kind === 'TRANSPORT' ? 'Transporte' : 'Manutenção' }}</span>
-                  <strong>{{ item.title }}</strong><span>{{ item.message }}</span>
-                  <small>{{ new Date(item.created_at).toLocaleString('pt-BR') }}</small>
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="top-avatar">{{ auth.user?.full_name?.charAt(0) || 'P' }}</div>
+          <NotificationCenter />
+          <button type="button" class="top-avatar profile-trigger" aria-label="Abrir meu perfil" :title="auth.user?.full_name" @click="openProfile">{{ auth.user?.full_name?.charAt(0) || 'P' }}</button>
         </div>
       </header>
       <main><router-view /></main>
     </section>
+    <ModalDialog v-if="profileOpen" title="Meu perfil" @close="profileOpen = false">
+      <div class="profile-summary"><div class="profile-avatar"><UserRound :size="30" /></div><div><span class="eyebrow">SESSÃO ATUAL</span><h3>{{ auth.user?.full_name }}</h3><p>{{ auth.user?.access_group_name || auth.user?.role_label }}</p></div></div>
+      <p v-if="profileLoading" role="status">Atualizando perfil...</p><GeneralError v-if="profileError" :message="profileError" @close="profileError = ''" />
+      <dl class="profile-details"><div><dt><Mail :size="16" />E-mail</dt><dd>{{ auth.user?.email }}</dd></div><div><dt><Phone :size="16" />Telefone</dt><dd>{{ auth.user?.phone ? formatPhone(auth.user.phone) : 'Não informado' }}</dd></div><div><dt><ShieldCheck :size="16" />Grupo de permissão</dt><dd>{{ auth.user?.access_group_name || auth.user?.role_label }}</dd></div><div><dt>Situação</dt><dd>{{ auth.user?.is_active ? 'Ativo' : 'Inativo' }}</dd></div></dl>
+      <div class="modal-actions"><button class="btn secondary" @click="logout"><LogOut :size="16" />Sair da conta</button></div>
+    </ModalDialog>
   </div>
 </template>
