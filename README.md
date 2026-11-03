@@ -1,60 +1,81 @@
 <div align="center">
 
-# PANDORA
+<img src="docs/assets/readme-banner.svg" alt="PANDORA — Gestão de locações, manutenção e logística de equipamentos. Projeto Interdisciplinar de Sistemas de Informação, 2026." width="100%">
 
-**Gestão de locações, manutenção e logística de equipamentos**
+**Django REST · Vue 3 · PostgreSQL**
 
-Projeto Interdisciplinar · Sistemas de Informação · 2026
+Da reserva à devolução: equipamentos, pessoas e processos conectados.
+
+[Conheça o projeto](#sobre-o-projeto) · [Instale e execute](#primeira-instalação) · [Explore os dados](#o-que-testar) · [Resolva dúvidas](#dúvidas-frequentes)
 
 </div>
 
+---
+
 ## Sobre o projeto
 
-O PANDORA organiza a operação dos equipamentos da Mazzi Materiais de Construção: cadastros, orçamentos, reservas, inspeções, retiradas e devoluções, manutenção, transporte e contas a receber. O assistente de IA consulta manuais e apoia o técnico; as decisões e liberações continuam sendo humanas.
+O **PANDORA** organiza a operação de equipamentos da Mazzi Materiais de Construção, reunindo cadastros, orçamentos, reservas, inspeções, retiradas, devoluções, manutenção, transporte e contas a receber.
 
-O projeto usa **Django REST**, **Vue 3** e **PostgreSQL**. Os comandos abaixo são para **PowerShell no Windows**, executados a partir da pasta indicada. Não é necessário ativar o ambiente virtual.
+O assistente de IA consulta manuais e apoia o trabalho técnico. As decisões e liberações continuam sob responsabilidade das pessoas que operam o sistema.
 
-## O que instalar
+**Vai testar pela primeira vez?** Siga as seis etapas abaixo. A base de demonstração acompanha o repositório e inclui clientes, equipamentos com fotos e operações em diferentes situações, para que você possa explorar o sistema desde o primeiro acesso.
 
-- **Python 3.12 ou superior**, compatível com Django 6.
-- **Node.js 22.12 ou superior** — o projeto também aceita a linha 20 a partir da versão 20.19.
-- **PostgreSQL 17 ou 18**, incluindo pgAdmin e as ferramentas de linha de comando.
+## Antes de começar
 
-Confira a instalação no terminal:
+Instale as ferramentas abaixo no seu computador:
+
+| Ferramenta | Versão | Para que será utilizada |
+| --- | --- | --- |
+| Python | 3.12 ou superior, compatível com Django 6 | Executar a API do projeto. |
+| Node.js | 22.12 ou superior; também aceita a linha 20 a partir da 20.19 | Instalar as dependências e executar o site. |
+| PostgreSQL | 17 ou 18, com pgAdmin | Armazenar e consultar os dados. |
+
+Confira as instalações de Python e Node.js em um terminal:
 
 ```powershell
 python --version
 node --version
 ```
 
-Mantenha os arquivos em UTF-8. No VS Code, a codificação aparece no canto inferior direito.
+Este guia utiliza **PowerShell no Windows**. Os comandos indicam em qual pasta você deve estar. Mantenha os arquivos em **UTF-8**; no VS Code, a codificação aparece no canto inferior direito.
 
-## Como rodar o projeto
+> **Em Linux ou macOS:** utilize `python3` quando necessário e substitua `.\.venv\Scripts\Activate.ps1` por `source .venv/bin/activate`.
 
-### 1. Baixar e abrir
+## Primeira instalação
 
-Neste repositório, clique em **Code → Download ZIP** e extraia os arquivos, ou use sua cópia Git. Abra no VS Code a pasta que contém `api`, `frontend` e este README.
+### 1. Baixe e abra o projeto
 
-### 2. Criar o banco no pgAdmin
+No GitHub, clique em **Code → Download ZIP** e extraia os arquivos, ou utilize sua cópia Git. Abra no VS Code a pasta que contém `api`, `frontend` e este README. Essa será a **raiz do projeto** nos próximos passos.
 
-1. Abra o pgAdmin e conecte-se ao PostgreSQL instalado.
+### 2. Crie seu banco de dados
+
+No pgAdmin:
+
+1. Conecte-se ao PostgreSQL instalado no seu computador.
 2. Clique com o botão direito em **Databases → Create → Database**.
-3. Em **Database**, informe `pandora_db`.
-4. Em **Owner**, escolha seu usuário local do PostgreSQL, normalmente `postgres`.
-5. Clique em **Save**. Guarde o nome do usuário e a senha que você definiu na instalação.
+3. No campo **Database**, informe `pandora_db`.
+4. Em **Owner**, selecione seu usuário local do PostgreSQL, normalmente `postgres`.
+5. Clique em **Save**.
 
-### 3. Instalar e configurar o backend
+Tenha à mão o usuário e a senha definidos na instalação do PostgreSQL. Você vai utilizá-los na configuração da próxima etapa.
 
-No terminal da raiz do projeto:
+### 3. Prepare a API
+
+A API, também chamada de backend, processa as operações do sistema e se conecta ao banco de dados.
+
+**No terminal da raiz do projeto**, crie e ative um ambiente virtual para manter as dependências do Python separadas das demais instalações do computador:
 
 ```powershell
 cd api
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-Abra `api/.env` e configure os campos abaixo com os dados do seu PostgreSQL. **Não altere a senha no `settings.py`.**
+O último comando cria seu arquivo de configuração local sem substituir um `.env` existente.
+
+Abra **`api/.env`** e ajuste os campos abaixo para o banco que você acabou de criar:
 
 ```dotenv
 DB_ENGINE=postgresql
@@ -67,162 +88,253 @@ DJANGO_DEBUG=true
 AI_ENABLED=false
 ```
 
-O valor de `DB_PASSWORD` acima é apenas uma indicação de preenchimento. Gere também uma chave exclusiva para `DJANGO_SECRET_KEY` com o comando abaixo e cole o resultado somente em `api/.env`:
+Substitua `DB_PASSWORD` pela sua senha e ajuste `DB_USER` se utilizar outro usuário. As credenciais do banco devem ser configuradas nesse arquivo; não é necessário editar `settings.py`.
+
+**Ainda no mesmo terminal**, gere uma chave exclusiva para o Django:
 
 ```powershell
 python -c "import secrets; print(secrets.token_urlsafe(50))"
 ```
 
-Não publique seu `.env`. O `.env.example` já deixa a IA desativada e os e-mails no console para os primeiros testes.
+Copie o resultado para o campo `DJANGO_SECRET_KEY` em `api/.env` e salve o arquivo.
 
-Crie as tabelas:
+> **Configuração pessoal:** mantenha senhas e chaves somente no `.env` local. Esse arquivo é ignorado pelo Git. O `.env.example` deve continuar sem credenciais reais.
 
-```powershell
-.\.venv\Scripts\python.exe manage.py migrate
-```
+Os demais valores do arquivo de exemplo já permitem iniciar os testes locais: a IA fica desativada e os e-mails aparecem apenas no terminal. Veja [Configurações opcionais](#configurações-opcionais) quando precisar ajustar integrações ou endereços.
 
-### 4. Carregar a base de testes
+### 4. Carregue a base de demonstração
 
-Ainda na pasta `api`:
+Com o ambiente virtual ativo, **na pasta `api`**, execute:
 
 ```powershell
-.\.venv\Scripts\python.exe manage.py seed_realistic_demo
+python manage.py migrate
+python manage.py seed_realistic_demo
 ```
 
-Na primeira execução, o comando solicita uma senha para os **novos usuários de demonstração**, sem mostrá-la no terminal. Anote a senha que você escolher. Usuários existentes mantêm sua senha, grupo e dados; reexecutar a carga não apaga a base nem desfaz os testes já feitos.
+O primeiro comando cria as tabelas no seu banco. O segundo preenche essas tabelas com os dados fictícios que acompanham o projeto no GitHub. Não é necessário receber um backup de outra pessoa.
 
-| Acesso | E-mail |
+Quando solicitado, **defina e confirme uma senha com pelo menos 8 caracteres**. A digitação fica oculta no terminal. Essa será a senha dos novos usuários demonstrativos:
+
+| Perfil | E-mail para entrar |
 | --- | --- |
 | Administrador | `admin@pandora.local` |
 | Vendas | `vendas@pandora.local` |
 | Manutenção | `manutencao@pandora.local` |
 | Logística | `logistica@pandora.local` |
-| Somente consulta financeira | `consulta@pandora.local` |
+| Consulta financeira | `consulta@pandora.local` |
 
-A carga cria dados fictícios com datas relativas ao dia da execução. Ela prepara fotos, manuais, histórico técnico, notificações, locações em diferentes etapas, viagens, campanhas em rascunho, contas abertas e recibos de baixas. Não envia e-mails nem consulta IA ou mapas. É permitida somente no PostgreSQL local `pandora_db` em desenvolvimento e em bancos locais de testes com prefixo `test_`.
+Aguarde a mensagem **Base fictícia pronta**, acompanhada do resumo dos registros. O acesso de administrador já estará disponível para testar pelo site, sem precisar executar `createsuperuser`.
 
-Caso precise redefinir uma senha **na sua instalação local**:
+**O que você encontrará em um banco novo:**
+
+| Clientes | Categorias | Equipamentos com fotos | Veículos | Orçamentos e locações |
+| :---: | :---: | :---: | :---: | :---: |
+| 18 | 12 | 30 | 12 | 26 |
+
+A carga também prepara inspeções, ordens de serviço, planos de manutenção, contas a receber, pagamentos fictícios, recibos, 12 campanhas em rascunho, manuais PDF e histórico demonstrativo de IA.
+
+As datas dos cenários são calculadas na primeira carga. Fotos e manuais são gravados automaticamente em `api/media/`. O carregamento não envia e-mails nem consulta serviços externos de IA ou mapas.
+
+> **Banco de demonstração:** utilize uma base dedicada aos testes. O comando exige PostgreSQL local (`localhost`, `127.0.0.1` ou `::1`), `DJANGO_DEBUG=true` e banco chamado `pandora_db` ou com prefixo `test_`.
+
+Você não precisa repetir a carga a cada inicialização. Reexecutá-la não limpa o banco nem reinicia os cenários, e os usuários existentes mantêm suas senhas e permissões. Evite executar o comando antigo `seed_demo`, pois ele redefine os acessos demonstrativos.
+
+### 5. Inicie a API
+
+**No mesmo terminal, na pasta `api`:**
 
 ```powershell
-.\.venv\Scripts\python.exe manage.py changepassword admin@pandora.local
+python manage.py runserver
 ```
 
-### 5. Iniciar a API
+Mantenha esse terminal aberto enquanto utiliza o sistema. A API estará disponível em **http://127.0.0.1:8000/api/**.
 
-No mesmo terminal, ainda em `api`:
+### 6. Inicie o site e faça seu primeiro acesso
+
+Abra **outro terminal na raiz do projeto** e execute:
 
 ```powershell
+cd frontend
+npm install
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+npm run dev
+```
+
+Acesse **http://127.0.0.1:5173** e entre com um dos e-mails demonstrativos e a senha que você definiu na etapa 4. Para conhecer todas as áreas, comece pelo perfil **Administrador**.
+
+Se o Vite indicar outra porta, abra o endereço mostrado no terminal e ajuste as configurações de endereço descritas em [Configurações opcionais](#configurações-opcionais).
+
+## Como iniciar nas próximas vezes
+
+Depois da primeira instalação, basta abrir **dois terminais na raiz do projeto**.
+
+**Terminal 1 — API:**
+
+```powershell
+cd api
+.\.venv\Scripts\Activate.ps1
+python manage.py runserver
+```
+
+**Terminal 2 — site:**
+
+```powershell
+cd frontend
+npm run dev
+```
+
+Mantenha ambos abertos durante o uso. Para encerrar cada processo, pressione **Ctrl+C** no respectivo terminal.
+
+Não é necessário recriar o ambiente virtual, reinstalar as dependências ou carregar os dados novamente a cada uso. Depois de atualizar o código, execute `python manage.py migrate` na pasta `api`, com o ambiente virtual ativo. Reinstale as dependências apenas quando `api/requirements.txt` ou os arquivos de dependências do frontend forem alterados.
+
+## O que testar
+
+| Área | Sugestões para explorar |
+| --- | --- |
+| Cadastros | Consulte clientes PF/PJ, categorias, checklists, equipamentos com fotos e veículos. Compare os acessos dos diferentes perfis. |
+| Locações | Explore orçamentos, reservas, inspeções, entregas e devoluções parciais, períodos e destinos por equipamento e documentos PDF. |
+| Manutenção | Acompanhe OS abertas, agendadas, em execução, aguardando peças, abandonadas e concluídas, além dos planos preventivos. |
+| Logística | Consulte entregas e coletas planejadas, concluídas e em andamento, com veículo e motorista. As coordenadas demonstrativas são ilustrativas. |
+| Comercial | Teste contas abertas e vencidas, baixas fictícias com recibo, sugestões de compra e campanhas em rascunho. |
+| Assistente | Consulte manuais PDF demonstrativos indexados e o histórico fictício de IA. Respostas de um modelo real dependem da configuração opcional. |
+
+**Para começar pelas operações, procure estas locações:**
+
+| Locação | Cenário |
+| --- | --- |
+| `ORC-CEN-007` | Entrega parcial de uma locação com três equipamentos. |
+| `ORC-CEN-008` | Devolução parcial. |
+| `ORC-CEN-009` | Transporte em andamento. |
+| `ORC-CEN-010` | Avaria identificada na devolução. |
+
+Em **Contas a receber**, procure **Construtora Vila Nova Ltda** para consultar contas abertas e baixadas e testar a seleção entre páginas.
+
+Os dados são fictícios e os pagamentos não movimentam dinheiro. Rotas reais e respostas do provedor de IA dependem das configurações abaixo.
+
+## Configurações opcionais
+
+Os valores de `api/.env.example` e `frontend/.env.example` atendem ao desenvolvimento local. Faça os ajustes no seu `.env` e reinicie o serviço correspondente para aplicá-los.
+
+<details>
+<summary><strong>Endereços e portas de acesso</strong></summary>
+
+Se o site iniciar em outra porta ou se você acessar o sistema por outro dispositivo, confira os endereços permitidos em `api/.env`:
+
+- `DJANGO_ALLOWED_HOSTS`: nomes ou IPs pelos quais a API será acessada.
+- `CORS_ALLOWED_ORIGINS`: origens autorizadas do site, incluindo protocolo e porta.
+- `FRONTEND_URL`: endereço do site.
+- `BACKEND_PUBLIC_URL`: endereço público da API, sem o sufixo `/api/`.
+
+Em `frontend/.env`, confira também `VITE_API_BASE_URL`, que aponta para a API e inclui `/api/`. Para os endereços deste guia, o valor é `http://127.0.0.1:8000/api`.
+
+</details>
+
+<details>
+<summary><strong>Assistente de inteligência artificial</strong></summary>
+
+Para habilitar respostas de um modelo real, crie sua chave no [console da Groq](https://console.groq.com/keys), preencha `GROQ_API_KEY` em `api/.env`, altere `AI_ENABLED=true` e reinicie a API.
+
+Mantenha a chave apenas no arquivo local. Sem essa configuração, a integração com o modelo permanece desativada; a base de demonstração já inclui manuais e histórico fictício para exploração.
+
+</details>
+
+<details>
+<summary><strong>Frete e mapa</strong></summary>
+
+O arquivo de exemplo já contém CEP, endereço e coordenadas de origem do depósito, tarifa por quilômetro, valor mínimo por trecho e parâmetros de viagem. Confira esses valores antes do uso operacional.
+
+A consulta de endereços e rotas precisa de internet e utiliza os serviços configurados em `GEOCODING_SEARCH_URL` e `FREIGHT_ROUTING_URL`. Para testar uma rota real, informe um endereço com CEP e número; as coordenadas da demonstração são apenas ilustrativas.
+
+</details>
+
+<details>
+<summary><strong>E-mails de teste e envio real</strong></summary>
+
+Por padrão, `EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend` mostra as mensagens no terminal da API, sem enviá-las. Você pode explorar a preparação das campanhas nesse modo.
+
+Para enviar mensagens reais, configure um backend SMTP e os dados do seu serviço exclusivamente em `api/.env`. As campanhas demonstrativas permanecem em rascunho até uma ação do usuário.
+
+</details>
+
+## Dúvidas frequentes
+
+<details>
+<summary><strong>O PowerShell bloqueou a ativação do ambiente virtual. Como continuar?</strong></summary>
+
+Você pode chamar diretamente o Python do ambiente virtual, sem alterar a política do PowerShell. Na pasta `api`, utilize:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe manage.py migrate
+.\.venv\Scripts\python.exe manage.py seed_realistic_demo
 .\.venv\Scripts\python.exe manage.py runserver
 ```
 
-Mantenha esse terminal aberto. A API estará em **http://127.0.0.1:8000/api/**.
+Para os demais comandos Python deste guia, substitua `python` por `.\.venv\Scripts\python.exe`.
 
-### 6. Iniciar o site
+Se o PowerShell bloquear `npm.ps1`, utilize `npm.cmd install` e `npm.cmd run dev` na pasta `frontend`.
 
-Abra **outro terminal na raiz do projeto**:
+</details>
+
+<details>
+<summary><strong>A API não conseguiu se conectar ao PostgreSQL.</strong></summary>
+
+Confira se o PostgreSQL está em execução e se o banco foi criado no pgAdmin. Verifique `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST` e `DB_PORT` no arquivo `api/.env` e tente novamente. Utilize as credenciais da sua instalação local.
+
+</details>
+
+<details>
+<summary><strong>A carga de demonstração recusou meu banco.</strong></summary>
+
+Confira em `api/.env`: `DB_ENGINE=postgresql`, `DJANGO_DEBUG=true`, `DB_HOST=localhost` e `DB_NAME=pandora_db`. O comando também aceita os hosts `127.0.0.1` e `::1` e nomes de banco com prefixo `test_`. Essa restrição evita executar a carga fora do ambiente local de demonstração.
+
+</details>
+
+<details>
+<summary><strong>Esqueci a senha de um acesso demonstrativo.</strong></summary>
+
+Com o ambiente virtual ativo, na pasta `api`, execute:
 
 ```powershell
-cd frontend
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-npm.cmd install
-npm.cmd run dev
+python manage.py changepassword admin@pandora.local
 ```
 
-Abra **http://127.0.0.1:5173** e entre com um dos acessos acima e a senha definida na carga. Se o Vite indicar outra porta, use o endereço mostrado no terminal e ajuste `CORS_ALLOWED_ORIGINS` em `api/.env`.
+Substitua o e-mail se precisar alterar a senha de outro perfil. Reexecutar a carga não altera a senha de usuários existentes.
 
-**Para iniciar novamente:** execute apenas os comandos `runserver` e `npm.cmd run dev`, cada um em seu terminal. Depois de atualizar o código, rode `migrate` e instale novamente as dependências se os arquivos de requisitos mudaram.
+</details>
 
-No Linux/macOS, substitua `python` por `python3` na criação do ambiente, `.venv\Scripts\python.exe` por `.venv/bin/python` e `npm.cmd` por `npm`.
+<details>
+<summary><strong>Quero testar novamente com os cenários originais.</strong></summary>
 
-## O que testar na base demonstrativa
+Crie outro banco vazio no pgAdmin, por exemplo `test_pandora_demo`, e ajuste `DB_NAME` em `api/.env`. Com o ambiente virtual ativo, na pasta `api`, execute:
 
-| Área | Sugestões de teste |
+```powershell
+python manage.py migrate
+python manage.py seed_realistic_demo
+```
+
+Depois, reinicie a API. O banco anterior permanece preservado, com as alterações feitas nos seus testes.
+
+</details>
+
+## Estrutura do projeto
+
+| Caminho | Conteúdo |
 | --- | --- |
-| Cadastros | Clientes PF/PJ, documentos e máscaras, endereços com número separado, observações, usuários, permissões, categorias e checklists, equipamentos e veículos. |
-| Locações | Orçamento em etapas, edição, disponibilidade, aprovação, inspeção prévia, entrega e devolução parcial, períodos e endereços por equipamento, prorrogação, cancelamento e PDFs. |
-| Manutenção | OS pré/pós-locação, reparo de avaria no retorno, chamados abertos/em execução/aguardando peças/abandonados, revisão periódica e liberação técnica. |
-| Logística | Entregas e coletas, agenda, viagem em andamento, veículo/motorista, roteiro do dia e carga. Os pontos demonstrativos do mapa são ilustrativos. |
-| Comercial | Faturamento, contas por cliente, mudança de vencimento, juros após cinco dias de carência, seleção de várias contas, baixa, recibo PDF, sugestões de compra e campanhas. |
-| Assistente | Manuais PDF indexados, histórico de casos e consultas fictícias identificadas como demonstração. Para respostas de um modelo real, configure a IA abaixo. |
+| `api/` | API Django, migrações e comandos de gestão. |
+| `api/accounts/demo_scenarios.py` | Cenários fictícios utilizados na carga demonstrativa. |
+| `api/seed_assets/equipment/` | Imagens que acompanham o repositório para os testes. |
+| `frontend/` | Interface web em Vue 3. |
+| `docs/assets/` | Recursos visuais da documentação. |
+| `ARTEFATOS DO PROJETO/` | Materiais acadêmicos do projeto. |
 
-Comece pelas locações `ORC-CEN-007` (três equipamentos, períodos/destinos e entrega parcial), `ORC-CEN-008` (devolução parcial), `ORC-CEN-009` (transporte em andamento) e `ORC-CEN-010` (avaria na devolução). Em Contas a receber, procure **Construtora Vila Nova Ltda** para testar seleção entre páginas e contas baixadas.
+As pastas `api/media/` e `backups/`, assim como os arquivos `.env`, são locais e não acompanham o GitHub.
 
-As contas são geradas na primeira entrega, vencendo na devolução prevista. A taxa inicial é **1% ao mês, simples**, proporcional por dia após cinco dias de carência, editável na conta aberta. A baixa registra o pagamento informado pelo operador; não movimenta dinheiro nem emite nota fiscal.
+## Equipe
 
-### IA, frete e e-mail
+Projeto Interdisciplinar · Sistemas de Informação · 2026
 
-- **IA real:** em `api/.env`, preencha sua própria `GROQ_API_KEY`, altere `AI_ENABLED=true` e reinicie a API. Sem isso, o restante do sistema funciona e a consulta aos manuais pode usar a busca local.
-- **Frete e mapa:** precisam de internet. O depósito já está configurado. Use um endereço real com CEP e número para testar uma rota; endereços da carga são fictícios. Entrega e coleta são calculadas separadamente. A tarifa inicial é R$ 3,00/km, com mínimo de R$ 25,00 por trecho/viagem, além dos adicionais configurados.
-- **E-mail de marketing sem envio real:** para testar a preparação e o botão de envio, use as configurações abaixo e reinicie a API. A mensagem será escrita apenas no terminal. As campanhas da carga permanecem em rascunho até sua ação.
-
-```dotenv
-EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
-EMAIL_HOST=localhost
-DEFAULT_FROM_EMAIL=teste@example.invalid
-```
-
-## Como criar um backup para os demais testadores
-
-### 1. Preparar a base
-
-Use apenas dados fictícios. Feche o site e pare o `runserver` com **Ctrl+C** enquanto gera a cópia, para evitar alterações durante o backup.
-
-### 2. Gerar o arquivo
-
-Em um terminal **na raiz do projeto**:
-
-```powershell
-.\api\.venv\Scripts\python.exe api/manage.py backup_local
-```
-
-O comando lê a conexão configurada, localiza `pg_dump`, exporta o PostgreSQL e cria um ZIP em `backups/`. O arquivo contém:
-
-- `database.dump`: banco completo, incluindo usuários, permissões e histórico;
-- `media/`: fotos, manuais e evidências;
-- `manifest.json`: data e hashes para verificar a integridade dos arquivos.
-
-O dump e o ZIP são verificados antes da conclusão. `.env`, chaves e configurações pessoais não entram no arquivo. O backup contém os dados e hashes de senha dos usuários: compartilhe somente a base fictícia, por um canal da equipe. A pasta `backups` é ignorada pelo Git.
-
-Se as ferramentas do PostgreSQL não forem encontradas, informe o caminho da versão instalada, por exemplo:
-
-```powershell
-.\api\.venv\Scripts\python.exe api/manage.py backup_local --pg-dump "C:\Program Files\PostgreSQL\18\bin\pg_dump.exe"
-```
-
-### 3. Restaurar em outro computador
-
-1. Instale a mesma versão principal do PostgreSQL usada na origem e configure o projeto até instalar as dependências.
-2. Extraia o ZIP recebido em uma pasta temporária.
-3. No pgAdmin, crie um banco **vazio**, por exemplo `pandora_db_restaurado`. Não execute `migrate` nesse banco antes da restauração.
-4. Clique com o botão direito no novo banco → **Restore**. Selecione `database.dump`, mantenha o formato **Custom** e execute a restauração. Confira o registro da operação.
-5. Copie a pasta `media` extraída para `api/media`.
-6. Em `api/.env`, ajuste `DB_NAME` para o banco restaurado e informe seu próprio usuário e senha do PostgreSQL.
-7. Rode `.\api\.venv\Scripts\python.exe api/manage.py migrate` a partir da raiz. Isso aplica eventuais migrações posteriores ao backup.
-8. Se não conhecer a senha do acesso demonstrativo, redefina-a localmente com `.\api\.venv\Scripts\python.exe api/manage.py changepassword admin@pandora.local`.
-9. Inicie a API e o frontend conforme os passos anteriores.
-
-Para reproduzir os cenários sem receber um ZIP, basta executar a carga `seed_realistic_demo` em um banco local novo. O código dessa carga acompanha o repositório.
-
-## Testes automatizados
-
-Na raiz do projeto, com PostgreSQL disponível:
-
-```powershell
-$env:AI_ENABLED='false'
-.\api\.venv\Scripts\python.exe api/manage.py check
-.\api\.venv\Scripts\python.exe api/manage.py test accounts assets commercial core customers rentals maintenance logistics --keepdb --noinput
-cd frontend
-npm.cmd test
-npm.cmd run build
-```
-
-O Django usa um banco separado com prefixo `test_`. O usuário do PostgreSQL precisa ter permissão para criá-lo. O comando acima cobre os módulos operacionais e comerciais; testes específicos de IA ficam em `api/ai`. A carga não substitui testes automatizados.
-
-## Estrutura e equipe
-
-`api/` contém a API, migrações e comandos de gestão; `frontend/` contém o site; `ARTEFATOS DO PROJETO/` reúne os materiais acadêmicos. `api/media/`, `backups/` e arquivos `.env` são locais.
-
-| RA | Nome |
+| RA | Integrante |
 | --- | --- |
 | 116758 | Eduardo Souza Gomes |
 | 116276 | Felipe Antonio Parolin |
@@ -230,3 +342,7 @@ O Django usa um banco separado com prefixo `test_`. O usuário do PostgreSQL pre
 | 116743 | Gabriel Moi Stensen |
 | 117224 | Matheus Henrique Araujo Silva |
 | 116305 | Rafael Donizete Mantoan |
+
+---
+
+[Voltar ao início](#sobre-o-projeto)

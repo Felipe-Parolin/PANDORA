@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="title description">
+  <title id="title">PANDORA — Gestão de equipamentos</title>
+  <desc id="description">Capa em grafite, âmbar e laranja. Gestão de locações, manutenção e logística. Projeto Interdisciplinar de Sistemas de Informação, 2026.</desc>
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 H 0 V 40" fill="none" stroke="#f4f4f4" stroke-opacity="0.05"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="300" rx="16" fill="#1a1c20"/>
+  <rect width="1200" height="300" rx="16" fill="url(#grid)"/>
+  <path d="M0 284H1200V300H0Z" fill="#cf7500"/>
+  <path d="M0 284H800V300H0Z" fill="#f0a500"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="56" y="57" fill="#f0a500" font-size="13" font-weight="700" letter-spacing="3">GESTÃO DE EQUIPAMENTOS</text>
+    <text x="52" y="139" fill="#f4f4f4" font-size="72" font-weight="700" letter-spacing="5">PANDORA</text>
+    <text x="56" y="184" fill="#f4f4f4" font-size="23">Locações, manutenção e logística em um só lugar.</text>
+    <text x="56" y="242" fill="#bfc1c5" font-size="15">Projeto Interdisciplinar · Sistemas de Informação · 2026</text>
+  </g>
+  <g fill="none" stroke-width="3" stroke-linejoin="round">
+    <path d="M1008 54 1118 116 1008 180 898 116Z" stroke="#f0a500"/>
+    <path d="M898 116V187L1008 250V180M1118 116V187L1008 250" stroke="#cf7500"/>
+    <path d="M953 85 1063 148V218" stroke="#f0a500"/>
+  </g>
+</svg>
