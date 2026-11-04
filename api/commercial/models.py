@@ -3,38 +3,6 @@ from django.db import models
 from django.db.models import Q
 
 
-class EquipmentPackage(models.Model):
-    name = models.CharField(max_length=140, unique=True)
-    description = models.TextField(blank=True)
-    image_url = models.URLField(blank=True)
-    category = models.ForeignKey("assets.EquipmentCategory", on_delete=models.PROTECT, related_name="packages", null=True, blank=True)
-    active = models.BooleanField(default=True)
-    promotional_discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    rental_days_default = models.PositiveIntegerField(default=1)
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_equipment_packages")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ("name",)
-
-    @property
-    def reference_total(self):
-        from decimal import Decimal
-        return sum((c.reference_daily_rate * c.quantity for c in self.components.all()), Decimal("0"))
-
-
-class EquipmentPackageComponent(models.Model):
-    package = models.ForeignKey(EquipmentPackage, on_delete=models.CASCADE, related_name="components")
-    category = models.ForeignKey("assets.EquipmentCategory", on_delete=models.PROTECT, related_name="package_components")
-    quantity = models.PositiveSmallIntegerField()
-    reference_daily_rate = models.DecimalField(max_digits=12, decimal_places=2)
-
-    class Meta:
-        constraints = [models.UniqueConstraint(fields=("package", "category"), name="unique_package_category")]
-        ordering = ("category__name",)
-
-
 class PurchaseRecommendation(models.Model):
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pendente de análise"

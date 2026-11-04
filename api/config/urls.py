@@ -12,7 +12,7 @@ from customers.views import CustomerViewSet
 from maintenance.views import MaintenancePlanViewSet, ServiceOrderViewSet
 from logistics.views import TransportTaskViewSet, VehicleViewSet
 from rentals.views import RentalInspectionViewSet, RentalQuoteViewSet
-from commercial.views import EquipmentPackageViewSet, PurchaseRecommendationViewSet, MarketingCampaignViewSet, BillingAnalyticsView, MarketingUnsubscribeView
+from commercial.views import PurchaseRecommendationViewSet, MarketingCampaignViewSet, BillingAnalyticsView, MarketingUnsubscribeView
 from commercial.finance_views import ReceivableViewSet, PaymentViewSet
 
 router = DefaultRouter()
@@ -29,7 +29,6 @@ router.register("rental-inspections", RentalInspectionViewSet, basename="rental-
 router.register("vehicles", VehicleViewSet, basename="vehicle")
 router.register("transport-tasks", TransportTaskViewSet, basename="transport-task")
 router.register("notifications", NotificationViewSet, basename="notification")
-router.register("packages", EquipmentPackageViewSet, basename="package")
 router.register("purchase-recommendations", PurchaseRecommendationViewSet, basename="purchase-recommendation")
 router.register("marketing-campaigns", MarketingCampaignViewSet, basename="marketing-campaign")
 router.register("receivables", ReceivableViewSet, basename="receivable")

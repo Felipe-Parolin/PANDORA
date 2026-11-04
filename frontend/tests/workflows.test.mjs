@@ -123,3 +123,22 @@ test('orçamento: item com OS pendente não impede negociar com outro equipament
   state.form.status = 'APPROVED'; assert.match(state.stepProblem(1), /indisponibilidade/)
   assert.deepEqual(state.form.items.map(item => item.equipment_id), [1, 2])
 })
+
+test('locações carregam orçamentos e clientes sem consultar funcionalidades removidas', async t => {
+  const quote = { id: 12, number: 'ORC-012', items: [] }
+  const customer = { id: 3, name: 'Cliente' }
+  const requested = []
+  const { state } = mountView(t, 'RentalsView', {
+    fetchAll: async url => {
+      requested.push(url)
+      if (url === '/rental-quotes/') return { data: [quote] }
+      if (url === '/customers/') return { data: [customer] }
+      throw new Error(`Consulta inesperada: ${url}`)
+    },
+  })
+  await flush()
+  assert.deepEqual(requested, ['/rental-quotes/', '/customers/'])
+  assert.deepEqual(state.quotes, [quote])
+  assert.deepEqual(state.customers, [customer])
+  assert.equal(state.customersLoading, false)
+})

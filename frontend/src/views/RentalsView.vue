@@ -25,8 +25,6 @@ import { api, apiError, can, money, rows, shortDate, fetchAll } from '../service
 const quotes = ref([])
 const route = useRoute(), router = useRouter()
 const customers = ref([]), customersLoading = ref(false)
-const packages = ref([])
-const selectedPackageId = ref('')
 const modal = ref(false)
 const quoteStep = ref(0), furthestStep = ref(0), scheduleDelivery = ref(false), scheduleReturn = ref(false), expandedActions = ref(null)
 const quoteSteps = ['Cliente e período', 'Equipamentos', 'Entrega e devolução', 'Valores e condições', 'Revisão e conclusão']
@@ -163,14 +161,12 @@ const visibleBlocked = computed(() => blockedEquipment.value.filter(item => matc
 async function load() {
   customersLoading.value = true
   try {
-    const [quoteResponse, customerResponse, packageResponse] = await Promise.all([
+    const [quoteResponse, customerResponse] = await Promise.all([
       fetchAll('/rental-quotes/'),
       can('customers.view') ? fetchAll('/customers/') : Promise.resolve({ data: [] }),
-      fetchAll('/packages/?active=true'),
     ])
     quotes.value = rows(quoteResponse.data)
     customers.value = rows(customerResponse.data)
-    packages.value = rows(packageResponse.data)
   } finally { customersLoading.value = false }
 }
 
@@ -265,7 +261,6 @@ function open(item = null) {
   quoteStep.value = 0; furthestStep.value = item ? 4 : 0
   scheduleDelivery.value = Boolean(item?.requested_delivery_at); scheduleReturn.value = Boolean(item?.requested_return_at)
   editing.value = item
-  selectedPackageId.value = ''
   error.value = ''
   availableEquipment.value = []
   blockedEquipment.value = []
@@ -618,31 +613,6 @@ watch([equipmentSearch, pickerOrdering, pickerBrand, pickerMinRate, pickerMaxRat
   }, 300)
 })
 
-async function applyPackage() {
-  const pack = packages.value.find(item => String(item.id) === String(selectedPackageId.value))
-  if (!pack) return
-  if (!pickerDatesValid.value) { error.value = 'Informe as datas do período antes de adicionar um pacote.'; return }
-  const additions = []
-  const shortages = []
-  try {
-    for (const component of pack.components || []) {
-      const params = { start: pickerPeriod.start_date, end: pickerPeriod.end_date, category: component.category, page_size: 100 }
-      if (editing.value) params.ignore_quote = editing.value.id
-      const { data } = await api.get('/rental-quotes/availability/', { params })
-      const takenIds = new Set([...form.items.map(line => line.equipment_id), ...additions.map(line => line.equipment_id)])
-      const candidates = data.available.map(entry => entry.equipment).filter(asset => !takenIds.has(asset.id))
-      if (candidates.length < component.quantity) shortages.push(`${component.category_name}: solicitado ${component.quantity}, disponível ${candidates.length}`)
-      candidates.slice(0, component.quantity).forEach(asset => additions.push({ equipment_id: asset.id, name: asset.name, code: asset.internal_code, daily_rate: Number(((Number(component.reference_daily_rate) > 0 ? Number(component.reference_daily_rate) : Number(asset.daily_rate)) * (1 - Number(pack.promotional_discount_percent || 0) / 100)).toFixed(2)), quantity_days: periodDays(pickerPeriod.start_date,pickerPeriod.end_date), start_date: pickerPeriod.start_date, end_date: pickerPeriod.end_date, uses_default_period: pickerPeriod.start_date === form.start_date && pickerPeriod.end_date === form.end_date }))
-    }
-  } catch (e) { error.value = apiError(e); return }
-  if (shortages.length) { error.value = `Não foi possível incluir o pacote: ${shortages.join('; ')}.`; return }
-  const unique = new Set(form.items.map(line => line.equipment_id))
-  additions.forEach(line => { if (!unique.has(line.equipment_id)) form.items.push(line) })
-  selectedPackageId.value = ''
-  error.value = ''
-  refreshFreightForLoad()
-}
-
 function toggle(item) {
   const index = form.items.findIndex(line => line.equipment_id === item.id)
   if (index >= 0) form.items.splice(index, 1)
@@ -832,7 +802,6 @@ onBeforeUnmount(() => { for (const leg of ['delivery','return']) clearTimeout(au
         <div class="quote-period-hint"><CalendarRange :size="17" /><span v-if="datesValid">{{ days }} diária(s) · {{ shortDate(form.start_date) }} a {{ shortDate(form.end_date) }}</span><span v-else>Informe uma devolução igual ou posterior à retirada.</span></div>
 
 </div><div v-show="quoteStep === 1" class="quote-equipment-step">        <section class="quote-editor-section"><header><div><h3>Equipamentos</h3><p>Escolha a categoria e depois os itens disponíveis nesse período.</p></div><div class="search-box"><Search :size="16" /><input v-model="equipmentSearch" placeholder="Buscar em todas as categorias" aria-label="Buscar equipamento" :disabled="!datesValid" /></div></header><div class="form-grid quote-picker-period"><div class="form-field"><label>Retirada para a busca<span class="required-mark" aria-hidden="true"> *</span></label><AppDateTime v-model="pickerPeriod.start_date" type="date" required /></div><div class="form-field"><label>Devolução para a busca<span class="required-mark" aria-hidden="true"> *</span></label><AppDateTime v-model="pickerPeriod.end_date" type="date" :min="pickerPeriod.start_date" required /></div><small class="span-2">Os novos itens usam este período. Você pode ajustar as datas de cada equipamento abaixo.</small></div><div class="list-controls quote-picker-filters"><label class="list-control"><span>Marca</span><input v-model="pickerBrand" type="search" placeholder="Todas as marcas" aria-label="Filtrar marca dos equipamentos" :disabled="!datesValid" /></label><label class="list-control"><span>Diária mínima (R$)</span><AppInput mask="money" placeholder="Ex.: 50,00" v-model="pickerMinRate" min="0" step="0.01" :disabled="!datesValid" /></label><label class="list-control"><span>Diária máxima (R$)</span><AppInput mask="money" placeholder="Ex.: 300,00" v-model="pickerMaxRate" min="0" step="0.01" :disabled="!datesValid" /></label><ListOrdering v-model="pickerOrdering" :options="pickerSortOptions" /><div v-if="pickerBrand || pickerMinRate !== '' || pickerMaxRate !== '' || pickerOrdering !== 'code'" class="filter-meta"><button type="button" class="btn secondary" @click="clearPickerFilters">Limpar filtros</button></div></div>
-          <div v-if="packages.length" class="package-quick-add"><AppSelect searchable v-model="selectedPackageId"><option value="">Adicionar pacote pronto...</option><option v-for="pack in packages" :key="pack.id" :value="String(pack.id)">{{ pack.name }}</option></AppSelect><button type="button" class="btn secondary" :disabled="!selectedPackageId || !datesValid" @click="applyPackage">Adicionar pacote</button></div>
           <div v-if="!datesValid" class="quote-picker-placeholder">Informe as datas para consultar os equipamentos.</div>
           <div v-else-if="showList && availabilityLoading" class="quote-picker-placeholder"><Clock3 :size="18" />Consultando disponibilidade...</div>
           <div v-else-if="!showList && categoryLoading && !categorySummary.length" class="quote-picker-placeholder"><Clock3 :size="18" />Carregando categorias...</div>

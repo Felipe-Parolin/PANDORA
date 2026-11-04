@@ -23,7 +23,7 @@ export function mutationMessage(url, method = 'get') {
   const path = String(url).replace(/^https?:\/\/[^/]+/,'').replace(/^\/api/,'').split('?')[0]
   if (/^\/receivables\/settle\/$/.test(path)) return 'Pagamento registrado. O recibo está disponível para download.'
   if (/^\/receivables\/\d+\/$/.test(path)) return 'Condições da conta atualizadas.'
-  const entity = {customers:'Cliente', users:'Funcionário', 'access-groups':'Grupo de permissão', equipment:'Equipamento', categories:'Categoria', vehicles:'Veículo', 'service-orders':'Ordem de serviço', 'maintenance-plans':'Plano de revisão', packages:'Pacote', 'marketing-campaigns':'Campanha', media:'Arquivo', 'rental-quotes':'Orçamento', notifications:'Notificação'}
+  const entity = {customers:'Cliente', users:'Funcionário', 'access-groups':'Grupo de permissão', equipment:'Equipamento', categories:'Categoria', vehicles:'Veículo', 'service-orders':'Ordem de serviço', 'maintenance-plans':'Plano de revisão', 'marketing-campaigns':'Campanha', media:'Arquivo', 'rental-quotes':'Orçamento', notifications:'Notificação'}
   const match = path.match(/^\/([^/]+)\/(\d+\/)?$/)
   if (match && entity[match[1]]) {
     // Estas operações já fornecem uma mensagem e seus atalhos de navegação.
