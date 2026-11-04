@@ -20,7 +20,6 @@ from logistics.models import TransportTask
 from logistics.services import ensure_transport_task, transport_completed
 from .documents import render_document_pdf, snapshot_for, snapshot_hash
 from .models import RentalDocument, RentalExtension, RentalInspection, RentalQuote, RentalItem
-from commercial.models import EquipmentPackage
 from .freight import estimate_freight, estimate_period_freight, lookup_cep
 from .serializers import RentalInspectionSerializer, RentalQuoteSerializer
 from .operations import deliver_items, return_items, finalize_items, extend_items
@@ -134,46 +133,6 @@ class RentalQuoteViewSet(ModelViewSet):
                 estimated=str(quote.estimated_transport_fee),
                 reason=quote.transport_fee_adjustment_reason,
             )
-
-    @transaction.atomic
-    @action(detail=True, methods=["post"], url_path="add-package")
-    def add_package(self, request, pk=None):
-        """Expands a package into real, individually validated equipment assets."""
-        quote = RentalQuote.objects.select_for_update().get(pk=self.get_object().pk)
-        if quote.status not in {RentalQuote.Status.DRAFT, RentalQuote.Status.SENT}:
-            raise ValidationError({"status": "Pacotes só podem ser adicionados a orçamentos em elaboração."})
-        try:
-            package = EquipmentPackage.objects.prefetch_related("components__category").get(pk=request.data.get("package_id"), active=True)
-        except EquipmentPackage.DoesNotExist:
-            raise ValidationError({"package_id": "Pacote ativo não encontrado."})
-        days = (quote.end_date - quote.start_date).days + 1
-        already_selected = set(quote.items.values_list("equipment_id", flat=True))
-        additions = []
-        shortages = {}
-        for component in package.components.all():
-            candidates = Equipment.objects.select_for_update().filter(category=component.category).exclude(pk__in=already_selected).order_by("internal_code")
-            selected = []
-            for asset in candidates:
-                reason = availability_reason(asset, quote.start_date, quote.end_date, quote)
-                if not reason:
-                    selected.append(asset)
-                if len(selected) == component.quantity:
-                    break
-            if len(selected) < component.quantity:
-                shortages[component.category.name] = {"requested": component.quantity, "available": len(selected), "reason": "Quantidade insuficiente sem conflito de reserva/manutenção."}
-            for asset in selected:
-                base_rate = component.reference_daily_rate or asset.daily_rate
-                discounted_rate = (base_rate * (Decimal("100") - package.promotional_discount_percent) / Decimal("100")).quantize(Decimal("0.01"))
-                additions.append(RentalItem(quote=quote, equipment=asset, daily_rate=discounted_rate, quantity_days=days, total=discounted_rate * days, start_date=quote.start_date, end_date=quote.end_date))
-                already_selected.add(asset.pk)
-        if shortages:
-            raise ValidationError({"availability": shortages})
-        if not additions:
-            raise ValidationError({"package": "O pacote não possui componentes cadastrados."})
-        RentalItem.objects.bulk_create(additions)
-        quote.recalculate()
-        self._audit(request, quote, "PACKAGE_ADDED", package_id=package.pk, package_name=package.name, equipment_ids=[x.equipment_id for x in additions])
-        return Response(self.get_serializer(quote).data)
 
     @action(detail=True, methods=["get"], url_path="whatsapp-link")
     def whatsapp_link(self, request, pk=None):

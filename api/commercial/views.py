@@ -19,8 +19,8 @@ from customers.models import Customer
 from maintenance.models import ServiceOrder
 from rentals.models import RentalQuote, RentalItem
 from core.models import AuditLog
-from .models import EquipmentPackage, PurchaseRecommendation, MarketingCampaign
-from .serializers import EquipmentPackageSerializer, PurchaseRecommendationSerializer, MarketingCampaignSerializer
+from .models import PurchaseRecommendation, MarketingCampaign
+from .serializers import PurchaseRecommendationSerializer, MarketingCampaignSerializer
 
 
 def render_campaign_html(campaign, unsubscribe_url):
@@ -34,20 +34,6 @@ def render_campaign_html(campaign, unsubscribe_url):
         f'<a href="{escape(unsubscribe_url, quote=True)}" style="color:#916000">Cancelar recebimento</a></footer>'
         '</div></body></html>'
     )
-
-class EquipmentPackageViewSet(ModelViewSet):
-    queryset = EquipmentPackage.objects.select_related("category", "created_by").prefetch_related("components__category")
-    serializer_class = EquipmentPackageSerializer
-    permission_classes = [ACLPermission]
-    acl_view = "rentals.view"
-    acl_manage = "rentals.manage"
-    def get_queryset(self):
-        qs = super().get_queryset()
-        if self.request.query_params.get("active") in ("true", "1"):
-            qs = qs.filter(active=True)
-        return qs
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
 
 def suggest_models_to_buy(category_id, quote_items, orders_qs, lost_items, limit=3):
     """Modelos da categoria que mais merecem reforço: mais locados, mais parados em manutenção e menos disponíveis.
