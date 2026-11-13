@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PANDORA | Protótipo de locação e manutenção</title>
+<style>
+:root{color-scheme:light;--ink:#1a1c20;--muted:#555a62;--paper:#f4f4f4;--line:#dedede;--amber:#f0a500;--green:#215f45;--red:#963627;font-family:"DM Sans",Arial,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink)}button,input{font:inherit}button{cursor:pointer}button:disabled{cursor:default;opacity:.55}button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid #165ab1;outline-offset:3px}
+.shell{display:grid;grid-template-columns:235px minmax(0,1fr);min-height:100vh}
+aside{background:var(--ink);color:white;padding:27px 18px;display:flex;flex-direction:column}
+.brand{display:flex;gap:12px;align-items:center;padding:0 8px 24px;border-bottom:1px solid #383a40}
+.mark{display:grid;place-items:center;width:40px;height:40px;border-radius:11px 11px 3px 11px;background:var(--amber);color:var(--ink);font-size:23px;font-weight:800}
+.brand strong{display:block;letter-spacing:.12em;font-size:15px}.brand small,.sidebar-note{color:#b9bbc2}
+nav{display:grid;gap:5px;margin-top:23px}nav button{background:none;border:0;border-radius:8px;color:#e2e3e7;text-align:left;padding:11px 10px;font-size:14px;display:flex;gap:9px;align-items:center}
+nav button:hover{background:#34363b}nav button[aria-current="step"]{color:var(--ink);background:var(--amber);font-weight:700}
+.step-dot{display:inline-grid;place-items:center;width:23px;height:23px;border:1px solid currentColor;border-radius:50%;font-size:11px;flex:none}
+.sidebar-note{margin:26px 8px 0;font-size:12px;line-height:1.5}.workspace{min-width:0}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 30px;min-height:65px;border-bottom:1px solid var(--line);font-size:14px;color:var(--muted)}
+main{max-width:1250px;margin:0 auto;padding:29px 30px 25px}h1,h2,h3,p{margin-top:0}h1{font-size:clamp(28px,4vw,38px);letter-spacing:-.035em;margin-bottom:7px}h2{font-size:20px;margin-bottom:8px}h3{font-size:16px;margin-bottom:8px}
+.lead{color:var(--muted);line-height:1.4;margin-bottom:21px}
+.metrics{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:12px;margin-bottom:16px}.card,.metric{background:white;border:1px solid var(--line);border-radius:12px}.metric{padding:13px 15px;min-width:0}.metric span{display:block;margin-bottom:5px;color:var(--muted);font-size:12px}.metric strong{font-size:15px;overflow-wrap:anywhere}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(210px,.43fr);gap:15px;align-items:start}.card{padding:19px;min-width:0}.support{padding:16px}.support p{font-size:13px;line-height:1.42}.support ol{padding-left:20px;margin:0}.support li{margin:0 0 9px;font-size:13px;color:var(--muted)}.support li:last-child{margin:0}
+section p{color:var(--muted);line-height:1.45;margin-bottom:11px}.notice{border-radius:7px;padding:9px 11px;background:#fff5db;color:#674600;font-size:14px;margin:10px 0;line-height:1.42}.notice.good{background:#e9f4ed;color:var(--green)}.notice.bad{background:#fbece8;color:var(--red)}
+.controls{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}.btn{padding:8px 12px;border:1px solid #d2d2d2;background:white;color:var(--ink);border-radius:7px;font-weight:700;font-size:14px;min-height:36px}.btn:hover:not(:disabled){background:#f5f5f5}.btn.primary{background:var(--amber);border-color:var(--amber)}.btn.primary:hover:not(:disabled){background:#ffb31b}
+.choices{display:grid;gap:8px;margin:11px 0}.choice{display:flex;align-items:flex-start;gap:8px;border:1px solid var(--line);border-radius:7px;padding:9px 10px;font-size:14px;line-height:1.35}.choice input{margin:3px 0 0;accent-color:#976000}
+.source{background:#f5f5f5;border:1px solid var(--line);border-radius:7px;padding:10px;margin:8px 0;font-size:13px}.source p{font-size:13px;margin:3px 0 0}
+.credits{margin-top:16px;color:var(--muted);font-size:13px}.credits summary{cursor:pointer}.credits ul{columns:2;padding-left:19px;line-height:1.55}.credits li{break-inside:avoid}
+@media(max-width:830px){.shell{grid-template-columns:185px minmax(0,1fr)}main{padding:21px 17px}.topbar{padding:10px 17px}.grid{grid-template-columns:1fr}}
+@media(max-width:570px){.shell{display:block}aside{padding:11px 13px}.brand{padding:0 0 9px}.sidebar-note{display:none}nav{display:flex;overflow:auto;margin:8px 0 0}nav button{white-space:nowrap;padding:7px 8px}.metrics{grid-template-columns:1fr 1fr;gap:8px}.metric:first-child{grid-column:1/-1}.credits ul{columns:1}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside>
+  <div class="brand"><div class="mark" aria-hidden="true">P</div><div><strong>PANDORA</strong><small>Locação e manutenção</small></div></div>
+  <nav aria-label="Etapas do cenário" id="navigation"></nav>
+  <p class="sidebar-note">Gerência de Projetos · SIF043<br>Projeto Interdisciplinar IV · FHO</p>
+</aside>
+<div class="workspace">
+  <header class="topbar"><span>Protótipo navegável · Dados fictícios</span><button class="btn" id="restart" type="button">Reiniciar cenário</button></header>
+  <main>
+    <h1 id="page-title" tabindex="-1"></h1>
+    <p class="lead" id="page-description"></p>
+    <div class="metrics" id="metrics" aria-label="Resumo da locação"></div>
+    <div class="grid">
+      <section class="card" id="screen" aria-labelledby="screen-title"></section>
+      <section class="card support" aria-labelledby="history-title"><h3 id="history-title">Histórico do equipamento</h3><div id="history"></div></section>
+    </div>
+    <div id="feedback" role="status" aria-live="polite" aria-atomic="true"></div>
+    <details class="credits"><summary>Equipe PANDORA e RAs</summary><ul>
+      <li>Eduardo Souza Gomes · 116758</li><li>Felipe Antonio Parolin · 116276</li>
+      <li>Gabriel Eduardo da Cunha · 116849</li><li>Gabriel Moi Stensen · 116743</li>
+      <li>Matheus Henrique Araujo Silva · 117224</li><li>Rafael Donizete Mantoan · 116305</li>
+    </ul></details>
+  </main>
+</div>
+</div>
+<script>
+"use strict";
+const steps = [
+  ["Reserva", "Locações e reservas", "Atendimento · Orçamento ORC-021 para Construtora Horizonte"],
+  ["Inspeção", "Inspeção pré-locação", "Manutenção · Checklist técnico da betoneira"],
+  ["Entrega", "Entrega do equipamento", "Atendimento e logística · Liberação e entrega da locação"],
+  ["Devolução", "Devolução do equipamento", "Atendimento e logística · Registro do retorno"],
+  ["Manutenção", "Manutenção e liberação", "Manutenção · Ordem de serviço pós-locação e histórico técnico"]
+];
+const initial = () => ({
+  step: 0, period: "free", transport: "pickup", reserved: false, pre: "waiting",
+  deliveryTrip: false, delivered: false, returnTrip: false, returned: false,
+  post: "waiting", ai: "idle", released: false, log: [], notice: null
+});
+let state = initial();
+const $ = id => document.getElementById(id);
+const msg = (text, type = "") => { state.notice = { text, type }; };
+const log = text => { state.log.push(text); };
+const badge = text => '<div class="notice good">' + text + '</div>';
+const control = (id, label, primary = false, disabled = false) =>
+  '<button class="btn' + (primary ? ' primary' : '') + '" type="button" data-action="' + id + '"' + (disabled ? ' disabled' : '') + '>' + label + '</button>';
+const buttons = (...items) => '<div class="controls">' + items.join("") + '</div>';
+const radio = (name, value, label) => '<label class="choice"><input type="radio" name="' + name + '" value="' + value + '"' + (state[name] === value ? ' checked' : '') + '><span>' + label + '</span></label>';
+
+function reservation() {
+  if (state.reserved) return badge("Reserva LOC-021 confirmada. Inspeção pré-locação aberta para EQ-014.") + buttons(control("next", "Abrir inspeção", true));
+  return '<p>Selecione o período para a Betoneira 400 L (EQ-014). O PANDORA revalida a disponibilidade ao confirmar a reserva.</p>' +
+    '<div class="choices" role="group" aria-label="Período da reserva">' +
+    radio("period", "free", "23 a 25/11/2026 · 3 diárias · R$ 360,00 sem frete") +
+    radio("period", "busy", "24 a 26/11/2026 · Conflito com reserva já existente em 26/11") + '</div>' +
+    '<div class="choices" role="group" aria-label="Modalidade de transporte">' +
+    radio("transport", "pickup", "Retirada e devolução no balcão") +
+    radio("transport", "trip", "Entrega e coleta contratadas") + '</div>' +
+    buttons(control("reserve", "Confirmar reserva", true));
+}
+function inspection() {
+  if (!state.reserved) return '<p>Confirme a reserva para abrir a inspeção pré-locação.</p>' + buttons(control("back", "Voltar à reserva", true));
+  if (state.pre === "passed") return badge("Checklist aprovado e liberação técnica registrada.") + buttons(control("next", "Abrir entrega", true));
+  const blocked = state.pre === "blocked";
+  return '<p>Verifique alimentação elétrica, proteção e funcionamento. Registre o resultado da vistoria.</p>' +
+    (blocked ? '<div class="notice bad">Impedimento crítico registrado. A entrega fica bloqueada até a correção e a reinspeção.</div>' : "") +
+    buttons(control("prePass", blocked ? "Registrar correção e aprovar reinspeção" : "Aprovar checklist e liberar", true),
+      blocked ? control("next", "Conferir bloqueio na entrega") : control("preFail", "Registrar impedimento crítico"));
+}
+function delivery() {
+  if (state.delivered) return badge("Entrega registrada. A locação está em andamento.") + buttons(control("next", "Abrir devolução", true));
+  if (!state.reserved || state.pre !== "passed") return '<div class="notice bad">Entrega bloqueada. É preciso confirmar a reserva e obter a liberação na inspeção pré-locação.</div>' + buttons(control("back", "Voltar à inspeção", true));
+  return (state.transport === "trip" && !state.deliveryTrip
+    ? '<p>A viagem de entrega precisa ser concluída para liberar o registro da operação.</p>' + buttons(control("deliveryTrip", "Concluir viagem de entrega", true))
+    : '<p>Equipamento liberado para entrega. ' + (state.deliveryTrip ? 'Viagem de entrega concluída.' : 'Retirada prevista no balcão.') + '</p>' + buttons(control("deliver", "Registrar entrega", true)));
+}
+function returnScreen() {
+  if (!state.delivered) return '<p>Registre a entrega antes de processar a devolução.</p>' + buttons(control("back", "Voltar à entrega", true));
+  if (state.returned) return badge("Devolução registrada. O equipamento fica indisponível até a liberação técnica pós-locação.") + buttons(control("next", "Abrir ordem de serviço", true));
+  return (state.transport === "trip" && !state.returnTrip
+    ? '<p>Conclua a coleta contratada antes de registrar a devolução.</p>' + buttons(control("returnTrip", "Concluir coleta", true))
+    : '<p>O registro da devolução abre a OS pós-locação para avaliação da condição do equipamento.</p>' + buttons(control("return", "Registrar devolução", true)));
+}
+function maintenance() {
+  if (!state.returned) return '<p>A OS pós-locação é aberta no registro da devolução.</p>' + buttons(control("back", "Voltar à devolução", true));
+  if (state.released) return badge("Testes finais aprovados. OS encerrada e equipamento disponível para nova locação.");
+  if (state.post === "waiting") return '<p>OS-041 · Registre o resultado da inspeção pós-locação.</p>' +
+    buttons(control("postPass", "Aprovar checklist pós-locação", true), control("postFail", "Registrar ruído anormal"));
+  if (state.post === "ready") return '<p>Checklist pós-locação aprovado. Registre o teste final e a decisão de liberação para disponibilizar a betoneira.</p>' +
+    buttons(control("release", "Aprovar teste final e liberar", true));
+  const suggestion = state.ai === "shown"
+    ? '<div class="source"><strong>Sugestão simulada</strong><p>Verificar fixação do tambor e folgas nos apoios antes do teste final.</p><p>Fonte fictícia: Manual de demonstração da betoneira, seção 4.2.</p></div>' +
+      buttons(control("accept", "Aceitar sugestão"), control("reject", "Rejeitar sugestão"))
+    : "";
+  const outcome = {
+    accepted: "Sugestão registrada como apoio à análise do técnico.",
+    rejected: "Sugestão rejeitada pelo técnico. A análise segue pelo fluxo manual.",
+    offline: "Assistente indisponível. A análise segue pelo fluxo manual."
+  }[state.ai];
+  return '<div class="notice">Ruído anormal registrado. O equipamento permanece indisponível.</div>' +
+    (outcome ? '<p>' + outcome + '</p>' : "") + suggestion +
+    buttons(
+      state.ai === "idle" ? control("suggest", "Consultar assistente de IA") : "",
+      state.ai === "idle" ? control("offline", "Simular falha da IA") : "",
+      control("repair", "Registrar correção técnica", true)
+    );
+}
+const screens = [reservation, inspection, delivery, returnScreen, maintenance];
+const actions = {
+  reserve() {
+    if (state.period === "busy") return msg("Reserva bloqueada. Já existe uma reserva no período selecionado. Escolha o outro período.", "bad");
+    state.reserved = true;
+    log("Reserva LOC-021 confirmada.");
+  },
+  prePass() { state.pre = "passed"; log("Inspeção pré-locação aprovada e liberação registrada."); },
+  preFail() { state.pre = "blocked"; log("Impedimento crítico na inspeção pré-locação."); },
+  deliveryTrip() { state.deliveryTrip = true; log("Viagem de entrega concluída."); },
+  deliver() { state.delivered = true; log("Entrega da LOC-021 registrada."); },
+  returnTrip() { state.returnTrip = true; log("Viagem de coleta concluída."); },
+  return() { state.returned = true; log("Devolução registrada e OS-041 aberta."); },
+  postPass() { state.post = "ready"; log("Checklist pós-locação aprovado."); },
+  postFail() { state.post = "problem"; log("Ruído anormal registrado na OS-041."); },
+  suggest() { state.ai = "shown"; },
+  offline() { state.ai = "offline"; log("Atendimento manual após falha simulada da IA."); },
+  accept() { state.ai = "accepted"; log("Técnico aceitou a sugestão da IA na OS."); },
+  reject() { state.ai = "rejected"; log("Técnico rejeitou a sugestão da IA na OS."); },
+  repair() { state.post = "ready"; log("Correção registrada e checklist pós-locação aprovado."); },
+  release() { state.released = true; log("Teste final aprovado e equipamento liberado."); }
+};
+function render() {
+  const [short, title, description] = steps[state.step];
+  $("page-title").textContent = title;
+  $("page-description").textContent = description;
+  $("navigation").innerHTML = steps.map(([name], i) =>
+    '<button type="button" data-step="' + i + '"' + (state.step === i ? ' aria-current="step"' : '') +
+    '><span class="step-dot" aria-hidden="true">' + (i + 1) + '</span>' + name + '</button>').join("");
+  const condition = state.released ? "Disponível" : state.returned ? "Aguardando liberação" :
+    state.delivered ? "Em locação" : state.pre === "blocked" ? "Impedimento técnico" :
+    state.reserved ? "Reservado" : "Em consulta";
+  $("metrics").innerHTML = '<div class="metric"><span>Equipamento</span><strong>EQ-014 · Betoneira 400 L</strong></div>' +
+    '<div class="metric"><span>Situação</span><strong>' + condition + '</strong></div>' +
+    '<div class="metric"><span>Locação</span><strong>' + (state.reserved ? 'LOC-021' : 'A confirmar') + '</strong></div>';
+  $("screen").innerHTML = '<h2 id="screen-title">' + ({
+    Reserva: "Disponibilidade e transporte", Inspeção: "Checklist e liberação",
+    Entrega: "Condições para entrega", Devolução: "Condições para devolução",
+    Manutenção: "Avaliação e liberação técnica"
+  })[short] + '</h2>' + screens[state.step]();
+  $("history").innerHTML = state.log.length
+    ? '<ol>' + state.log.map(item => '<li>' + item + '</li>').join("") + '</ol>'
+    : '<p>Os eventos do cenário aparecem aqui conforme a operação avança.</p>';
+  $("feedback").textContent = "";
+  if (state.notice) {
+    const notice = document.createElement("div");
+    notice.className = "notice " + state.notice.type;
+    notice.textContent = state.notice.text;
+    $("feedback").append(notice);
+  }
+}
+function go(step) {
+  state.step = step;
+  state.notice = null;
+  render();
+  $("page-title").focus();
+}
+$("navigation").addEventListener("click", event => {
+  const target = event.target.closest("[data-step]");
+  if (target) go(Number(target.dataset.step));
+});
+$("screen").addEventListener("change", event => {
+  if (event.target.matches('input[type="radio"]')) {
+    state[event.target.name] = event.target.value;
+    state.notice = null;
+    $("feedback").textContent = "";
+  }
+});
+$("screen").addEventListener("click", event => {
+  const action = event.target.closest("[data-action]")?.dataset.action;
+  if (!action) return;
+  if (action === "next") return go(state.step + 1);
+  if (action === "back") return go(state.step - 1);
+  state.notice = null;
+  actions[action]();
+  render();
+  const focus = $("screen").querySelector('[data-action="' + action + '"]') ||
+    $("screen").querySelector("button") || $("page-title");
+  focus.focus();
+});
+$("restart").addEventListener("click", () => { state = initial(); go(0); });
+render();
+</script>
+</body>
+</html>
